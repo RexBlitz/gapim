@@ -153,7 +153,7 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 status, result = test_gemini_key(key)
                 trash_keys = get_trash_keys()
                 if key in [tk['key'] for tk in trash_keys]:
-                    result += " (in trash)"
+                    result += f" \\(in trash: {trash_keys[[tk['key'] for tk in trash_keys].index(key)]['status']}\\) "
                 await update.message.reply_text(
                     escape_markdown_v2(f"🔑 Testing key {index + 1}: ") + f"`{escape_markdown_v2(key)}`\n{escape_markdown_v2(result)}",
                     parse_mode='MarkdownV2'
@@ -175,7 +175,7 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for i, key in enumerate(keys):
             status, result = test_gemini_key(key)
             if key in trash_keys:
-                result += f" (in trash: {trash_keys[key]})"
+                result += f" \\(in trash: {trash_keys[key]}\\)"
             results.append(f"**{i + 1}\\.** `{escape_markdown_v2(key)}`: {escape_markdown_v2(result)}")
         
         response = escape_markdown_v2("🔑 **Test Results for All Keys:**\n\n") + "\n".join(results)
@@ -291,7 +291,7 @@ async def handle_test_trash(query: CallbackQuery) -> None:
     for i, entry in enumerate(trash_list):
         key = entry["key"]
         status, result = test_gemini_key(key)
-        results.append(f"**{i + 1}\\.** `{escape_markdown_v2(key)}` \\(Original: {entry['status']}\\)\\: {escape_markdown_v2(result)}")
+        results.append(f"**{i + 1}\\.** `{escape_markdown_v2(key)}` \\(Original: {escape_markdown_v2(entry['status'])}\\): {escape_markdown_v2(result)}")
     response = escape_markdown_v2("🔍 **Trash Keys Test Results:**\n\n") + "\n".join(results)
     await query.edit_message_text(response, parse_mode='MarkdownV2')
 
@@ -330,7 +330,7 @@ async def handle_view_trash(query: CallbackQuery) -> None:
     if not trash_list:
         await query.edit_message_text(escape_markdown_v2("📭 Trash is empty."))
         return
-    lines = [f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}` \\(Status: {entry['status']}\\")" for i, entry in enumerate(trash_list)]
+    lines = [f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}` \\(Status: {escape_markdown_v2(entry['status'])}\\)" for i, entry in enumerate(trash_list)]
     response = escape_markdown_v2("📋 **Trash Keys:**\n\n") + "\n".join(lines)
     await query.edit_message_text(response, parse_mode='MarkdownV2')
 
