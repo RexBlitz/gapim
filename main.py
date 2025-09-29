@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # --- ⚙️ CONFIGURATION ---
 BOT_TOKEN = "8493774369:AAFFquaaAtX3FXbsgjNnDLXRogt60GroDyU"
 MONGO_DB_URL = "mongodb+srv://irexanon:xUf7PCf9cvMHy8g6@rexdb.d9rwo.mongodb.net/?retryWrites=true&w=majority&appName=RexDB"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"  # Updated to gemini-1.5-flash
 # -------------------------------------------------------------------------
 
 # --- 📦 DATABASE HELPER FUNCTIONS ---
@@ -55,9 +55,9 @@ def test_gemini_key(api_key: str) -> str:
         elif response.status_code == 400 or response.status_code == 401:
             return "❌ Invalid key"
         else:
-            return f"❓ Error: {response.status_code} - {response.text}"
+            return f"❓ Error: {response.status_code} - {response.text[:50]}"  # Truncated for safety
     except Exception as e:
-        return f"❓ Error testing key: {str(e)}"
+        return f"❓ Error testing key: {str(e)[:50]}"  # Truncated for safety
 
 # --- 🛠️ MARKDOWN ESCAPING FUNCTION ---
 def escape_markdown_v2(text: str) -> str:
@@ -71,7 +71,8 @@ def escape_markdown_v2(text: str) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Displays the welcome message with the total key count."""
     total_keys = len(get_gemini_keys())
-    help_text = f"""
+    help_text = escape_markdown_v2(
+        f"""
 👋 **Gemini API Key Storage**
 📊 Currently storing: **{total_keys}** keys
 
@@ -79,18 +80,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 - Use /list to see all stored keys.
 - Use /test [index] to test a specific key or all keys.
 """
+    )
     await update.message.reply_text(help_text, parse_mode='MarkdownV2')
 
 async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lists all stored keys."""
     keys = get_gemini_keys()
     if not keys:
-        await update.message.reply_text("No keys are stored.", parse_mode='MarkdownV2')
+        await update.message.reply_text(escape_markdown_v2("No keys are stored."), parse_mode='MarkdownV2')
         return
         
     key_lines = [f"**{i + 1}\\.** `{escape_markdown_v2(key)}`" for i, key in enumerate(keys)]
-        
-    response = "🔑 **Stored Keys:**\n\n" + "\n".join(key_lines)
+    response = escape_markdown_v2("🔑 **Stored Keys:**\n\n") + "\n".join(key_lines)
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
 async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -103,19 +104,19 @@ async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYP
         current_keys = get_gemini_keys()
 
         if key in current_keys:
-            await update.message.reply_text("⚠️ That key is already saved.", parse_mode='MarkdownV2')
+            await update.message.reply_text(escape_markdown_v2("⚠️ That key is already saved."), parse_mode='MarkdownV2')
             return
 
         # No validation, just add and save
         current_keys.append(key)
         save_gemini_keys(current_keys)
-        await update.message.reply_text("✅ Key saved.", parse_mode='MarkdownV2')
+        await update.message.reply_text(escape_markdown_v2("✅ Key saved."), parse_mode='MarkdownV2')
 
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Tests one or all stored Gemini API keys."""
     keys = get_gemini_keys()
     if not keys:
-        await update.message.reply_text("No keys are stored to test.", parse_mode='MarkdownV2')
+        await update.message.reply_text(escape_markdown_v2("No keys are stored to test."), parse_mode='MarkdownV2')
         return
 
     # Check if an index is provided
@@ -125,29 +126,29 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             index = int(args[0]) - 1  # Convert to 0-based index
             if 0 <= index < len(keys):
                 key = keys[index]
-                result = test_gemini_key(key)
+                result = escape_markdown_v2(test_gemini_key(key))  # Escape result text
                 await update.message.reply_text(
-                    f"🔑 Testing key {index + 1}: `{escape_markdown_v2(key)}`\n{result}",
+                    escape_markdown_v2(f"🔑 Testing key {index + 1}: ") + f"`{escape_markdown_v2(key)}`\n{result}",
                     parse_mode='MarkdownV2'
                 )
             else:
                 await update.message.reply_text(
-                    f"⚠️ Invalid index. Please provide a number between 1 and {len(keys)}.",
+                    escape_markdown_v2(f"⚠️ Invalid index. Please provide a number between 1 and {len(keys)}."),
                     parse_mode='MarkdownV2'
                 )
         except ValueError:
             await update.message.reply_text(
-                "⚠️ Please provide a valid number for the key index.",
+                escape_markdown_v2("⚠️ Please provide a valid number for the key index."),
                 parse_mode='MarkdownV2'
             )
     else:
         # Test all keys
         results = []
         for i, key in enumerate(keys):
-            result = test_gemini_key(key)
+            result = escape_markdown_v2(test_gemini_key(key))  # Escape result text
             results.append(f"**{i + 1}\\.** `{escape_markdown_v2(key)}`: {result}")
         
-        response = "🔑 **Test Results for All Keys:**\n\n" + "\n".join(results)
+        response = escape_markdown_v2("🔑 **Test Results for All Keys:**\n\n") + "\n".join(results)
         await update.message.reply_text(response, parse_mode='MarkdownV2')
 
 async def post_init(application: Application) -> None:
@@ -174,4 +175,4 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    main() 
