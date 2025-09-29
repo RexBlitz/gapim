@@ -52,6 +52,7 @@ async def test_key_validity(key: str) -> str:
     Returns a status string indicating the key's state.
     """
     try:
+        # Client initialization is the fastest way to validate the key format/existence
         client = genai.Client(api_key=key)
         # Use asyncio.to_thread to run the synchronous list_models call without blocking
         await asyncio.to_thread(client.list_models)
@@ -123,7 +124,6 @@ async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYP
     # Checks for format only (starts with AIza, correct length)
     if re.match(r'^AIza[A-Za-z0-9_-]{35}$', message_text):
         key = message_text
-        # The line that caused the IndentationError is now correctly indented:
         current_keys = get_gemini_keys()
 
         if key in current_keys:
@@ -152,7 +152,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", start))
     application.add_handler(CommandHandler("list", list_keys))
-    application.add_handler(CommandHandler("test", test_keys)) # Added Test Handler
+    application.add_handler(CommandHandler("test", test_keys)) 
     
     # Message Handler for keys
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
@@ -161,134 +161,5 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == '__main__':
-    # Make sure you have the google-genai library installed:
-    # pip install google-genai
-    main()
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Displays the welcome message with the total key count."""
-    total_keys = len(get_gemini_keys())
-    help_text = f"""
-👋 **Gemini API Key Storage**
-📊 Currently storing: **{total_keys}** keys
-
-- Send a message with a key to save it.
-- Use `/list` to see all stored keys.
-- Use `/test` to check the validity of all stored keys.
-    """
-    await update.message.reply_text(help_text, parse_mode='Markdown')
-
-async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Lists all stored keys."""
-    keys = get_gemini_keys()
-    if not keys:
-        await update.message.reply_text("No keys are stored.")
-        return
-        
-    key_lines = [f"**{i + 1}.** `{key}`" for i, key in enumerate(keys)]
-        
-    response = "🔑 **Stored Keys:**\n\n" + "\n".join(key_lines)
-    await update.message.reply_text(response, parse_mode='Markdown')
-
-async def test_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Tests all stored keys for validity."""
-    keys = get_gemini_keys()
-    if not keys:
-        await update.message.reply_text("No keys to test.")
-        return
-
-    await update.message.reply_text("⏳ **Testing all stored keys...** This might take a moment.")
-    
-    # Create concurrent tasks to test all keys
-    tasks = [test_key_validity(key) for key in keys]
-    results = await asyncio.gather(*tasks)
-
-    # Compile the final report
-    report_lines = []
-    for i, (key, status) in enumerate(zip(keys, results)):
-        # Shorten the key for display
-        short_key = f"{key[:4]}...{key[-4:]}"
-        report_lines.append(f"**{i + 1}.** `{short_key}`: {status}")
-        
-    response = "🔬 **Key Test Results**\n\n" + "\n".join(report_lines)
-    await update.message.reply_text(response, parse_mode='Markdown')
-
-async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles raw text messages to save keys without validation."""
-    message_text = update.message.text.strip()
-    
-    # Checks for format only (starts with AIza, correct length)
-    # NOTE: The pattern for a Google/Gemini API key is usually not 'AIza...'
-    # but I'm keeping your original regex: ^AIza[A-Za-z0-9_-]{35}$
-    if re.match(r'^AIza[A-Za-z0-9_-]{35}$', message_text):
-        key = message_text
-        current_keys = get_gemini_keys()
-
-        if key in current_keys:
-            await update.message.reply_text("⚠️ That key is already saved.")
-            return
-
-        # No validation, just add and save
-        current_keys.append(key)
-        save_gemini_keys(current_keys)
-        await update.message.reply_text("✅ Key saved.")
-
-async def post_init(application: Application) -> None:
-    """Sets the bot's command menu after initialization."""
-    commands = [
-        BotCommand("start", " Start the bot"),
-        BotCommand("list", " List all keys"),
-        BotCommand("test", " Test validity of all keys"),
-    ]
-    await application.bot.set_my_commands(commands)
-
-def main() -> None:
-    """Sets up and runs the bot."""
-    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", start))
-    application.add_handler(CommandHandler("list", list_keys))
-    # ADDED THE NEW COMMAND HANDLER
-    application.add_handler(CommandHandler("test", test_keys))
-    
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
-
-    print("Gemini Key storage bot is running...")
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
-        current_keys = get_gemini_keys()
-
-        if key in current_keys:
-            await update.message.reply_text("⚠️ That key is already saved.")
-            return
-
-        # No validation, just add and save
-        current_keys.append(key)
-        save_gemini_keys(current_keys)
-        await update.message.reply_text("✅ Key saved.")
-
-async def post_init(application: Application) -> None:
-    """Sets the bot's command menu after initialization."""
-    commands = [
-        BotCommand("start", " Start the bot"),
-        BotCommand("list", " List all keys"),
-    ]
-    await application.bot.set_my_commands(commands)
-
-def main() -> None:
-    """Sets up and runs the bot."""
-    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", start))
-    application.add_handler(CommandHandler("list", list_keys))
-    
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
-
-    print("Gemini Key storage bot  is running...")
-    application.run_polling()
-
-if __name__ == '__main__':
+    # Required installation: pip install google-genai pymongo python-telegram-bot
     main()
