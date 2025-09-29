@@ -153,7 +153,8 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 status, result = test_gemini_key(key)
                 trash_keys = get_trash_keys()
                 if key in [tk['key'] for tk in trash_keys]:
-                    result += f" \\(in trash: {trash_keys[[tk['key'] for tk in trash_keys].index(key)]['status']}\\) "
+                    trash_status = trash_keys[[tk['key'] for tk in trash_keys].index(key)]['status']
+                    result += f" \\(in trash: {escape_markdown_v2(trash_status)}\\)"
                 await update.message.reply_text(
                     escape_markdown_v2(f"🔑 Testing key {index + 1}: ") + f"`{escape_markdown_v2(key)}`\n{escape_markdown_v2(result)}",
                     parse_mode='MarkdownV2'
@@ -175,7 +176,7 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for i, key in enumerate(keys):
             status, result = test_gemini_key(key)
             if key in trash_keys:
-                result += f" \\(in trash: {trash_keys[key]}\\)"
+                result += f" \\(in trash: {escape_markdown_v2(trash_keys[key])}\\)"
             results.append(f"**{i + 1}\\.** `{escape_markdown_v2(key)}`: {escape_markdown_v2(result)}")
         
         response = escape_markdown_v2("🔑 **Test Results for All Keys:**\n\n") + "\n".join(results)
@@ -200,17 +201,17 @@ async def trash_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles button callbacks from the trash menu."""
     query = update.callback_query
-    await query.answer()
+    await query.answer()  # Acknowledge the callback
 
     data = query.data
     if data == "trash_rate":
-        await handle_trash_rate(query)
+        await handle_trash_rate(query, context)  # Pass context for menu return
     elif data == "trash_invalid":
-        await handle_trash_invalid(query)
+        await handle_trash_invalid(query, context)
     elif data == "test_trash":
         await handle_test_trash(query)
     elif data == "restore":
-        await handle_restore_confirm(query)
+        await handle_restore_confirm(query, context)
     elif data == "view_trash":
         await handle_view_trash(query)
     elif data.startswith("confirm_"):
@@ -222,18 +223,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif action == "restore":
             await confirm_restore(query, True)
     elif data.startswith("cancel_"):
-        await query.edit_message_text(escape_markdown_v2("❌ Action cancelled. Back to menu."))
+        await query.edit_message_text(escape_markdown_v2("❌ Action cancelled."))
         await trash_menu(query, context)
 
-async def handle_trash_rate(query: CallbackQuery) -> None:
+async def handle_trash_rate(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles request to trash rate-limited keys with confirmation."""
-    await query.edit_message_text(escape_markdown_v2("⚠️ **Confirm Trash Rate Limit Keys?**\n\nThis will move all currently rate-limited keys to trash. They can be restored later if limits reset."))
-    keyboard = [
-        [InlineKeyboardButton("✅ Yes, Trash Them!", callback_data="confirm_trash_rate")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_trash_rate")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_reply_markup(reply_markup=reply_markup)
+    await query.edit_message_text(
+        escape_markdown_v2("⚠️ **Confirm Trash Rate Limit Keys?**\n\nThis will move all currently rate-limited keys to trash. They can be restored later if limits reset."),
+        parse_mode='MarkdownV2',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Trash Them!", callback_data="confirm_trash_rate")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_trash_rate")]
+        ])
+    )
 
 async def confirm_trash_rate(query: CallbackQuery, confirmed: bool) -> None:
     """Confirms and executes trashing rate-limited keys."""
@@ -251,17 +253,18 @@ async def confirm_trash_rate(query: CallbackQuery, confirmed: bool) -> None:
             moved += 1
     save_gemini_keys(keys)
     save_trash_keys(trash_list)
-    await query.edit_message_text(escape_markdown_v2(f"✅ Moved {moved} rate-limited keys to trash."))
+    await query.edit_message_text(escape_markdown_v2(f"✅ Moved {moved} rate-limited keys to trash."), parse_mode='MarkdownV2')
 
-async def handle_trash_invalid(query: CallbackQuery) -> None:
+async def handle_trash_invalid(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles request to trash invalid keys with confirmation."""
-    await query.edit_message_text(escape_markdown_v2("⚠️ **Confirm Trash Invalid Keys (Permanent)?**\n\nThis will **permanently** remove invalid keys from storage. No restore!"))
-    keyboard = [
-        [InlineKeyboardButton("✅ Yes, Permanent Trash!", callback_data="confirm_trash_invalid")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_trash_invalid")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_reply_markup(reply_markup=reply_markup)
+    await query.edit_message_text(
+        escape_markdown_v2("⚠️ **Confirm Trash Invalid Keys (Permanent)?**\n\nThis will **permanently** remove invalid keys from storage. No restore!"),
+        parse_mode='MarkdownV2',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Permanent Trash!", callback_data="confirm_trash_invalid")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_trash_invalid")]
+        ])
+    )
 
 async def confirm_trash_invalid(query: CallbackQuery, confirmed: bool) -> None:
     """Confirms and executes permanent trashing of invalid keys."""
@@ -279,13 +282,13 @@ async def confirm_trash_invalid(query: CallbackQuery, confirmed: bool) -> None:
             moved += 1
     save_gemini_keys(keys)
     save_trash_keys(trash_list)
-    await query.edit_message_text(escape_markdown_v2(f"🗑️ Permanently trashed {moved} invalid keys. Gone forever!"))
+    await query.edit_message_text(escape_markdown_v2(f"🗑️ Permanently trashed {moved} invalid keys. Gone forever!"), parse_mode='MarkdownV2')
 
 async def handle_test_trash(query: CallbackQuery) -> None:
     """Tests all trash keys."""
     trash_list = get_trash_keys()
     if not trash_list:
-        await query.edit_message_text(escape_markdown_v2("📭 Trash is empty. Nothing to test!"))
+        await query.edit_message_text(escape_markdown_v2("📭 Trash is empty. Nothing to test!"), parse_mode='MarkdownV2')
         return
     results = []
     for i, entry in enumerate(trash_list):
@@ -295,15 +298,16 @@ async def handle_test_trash(query: CallbackQuery) -> None:
     response = escape_markdown_v2("🔍 **Trash Keys Test Results:**\n\n") + "\n".join(results)
     await query.edit_message_text(response, parse_mode='MarkdownV2')
 
-async def handle_restore_confirm(query: CallbackQuery) -> None:
+async def handle_restore_confirm(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles restore request with confirmation."""
-    await query.edit_message_text(escape_markdown_v2("⚠️ **Confirm Restore Keys?**\n\nThis will test trashed keys and restore only those no longer rate-limited. Invalid ones stay trashed."))
-    keyboard = [
-        [InlineKeyboardButton("✅ Yes, Restore Eligible!", callback_data="confirm_restore")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_restore")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_reply_markup(reply_markup=reply_markup)
+    await query.edit_message_text(
+        escape_markdown_v2("⚠️ **Confirm Restore Keys?**\n\nThis will test trashed keys and restore only those no longer rate-limited. Invalid ones stay trashed."),
+        parse_mode='MarkdownV2',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Restore Eligible!", callback_data="confirm_restore")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_restore")]
+        ])
+    )
 
 async def confirm_restore(query: CallbackQuery, confirmed: bool) -> None:
     """Confirms and executes restore of eligible trash keys."""
@@ -322,13 +326,13 @@ async def confirm_restore(query: CallbackQuery, confirmed: bool) -> None:
             restored += 1
     save_gemini_keys(keys)
     save_trash_keys(trash_list)
-    await query.edit_message_text(escape_markdown_v2(f"🔄 Restored {restored} eligible keys from trash."))
+    await query.edit_message_text(escape_markdown_v2(f"🔄 Restored {restored} eligible keys from trash."), parse_mode='MarkdownV2')
 
 async def handle_view_trash(query: CallbackQuery) -> None:
     """Views all trash keys."""
     trash_list = get_trash_keys()
     if not trash_list:
-        await query.edit_message_text(escape_markdown_v2("📭 Trash is empty."))
+        await query.edit_message_text(escape_markdown_v2("📭 Trash is empty."), parse_mode='MarkdownV2')
         return
     lines = [f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}` \\(Status: {escape_markdown_v2(entry['status'])}\\)" for i, entry in enumerate(trash_list)]
     response = escape_markdown_v2("📋 **Trash Keys:**\n\n") + "\n".join(lines)
