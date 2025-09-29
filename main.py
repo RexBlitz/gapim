@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # --- ⚙️ CONFIGURATION ---
 BOT_TOKEN = "8493774369:AAFFquaaAtX3FXbsgjNnDLXRogt60GroDyU"
 MONGO_DB_URL = "mongodb+srv://irexanon:xUf7PCf9cvMHy8g6@rexdb.d9rwo.mongodb.net/?retryWrites=true&w=majority&appName=RexDB"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
 # -------------------------------------------------------------------------
 
 # --- 📦 DATABASE HELPER FUNCTIONS ---
@@ -167,59 +167,6 @@ def main() -> None:
     application.add_handler(CommandHandler("help", start))
     application.add_handler(CommandHandler("list", list_keys))
     application.add_handler(CommandHandler("test", test_key))
-    
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
-
-    print("Gemini Key storage bot is running...")
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
-    # Check if an index is provided
-    args = context.args
-    if args:
-        try:
-            index = int(args[0]) - 1  # Convert to 0-based index
-            if 0 <= index < len(keys):
-                key = keys[index]
-                result = test_gemini_key(key)
-                await update.message.reply_text(
-                    f"🔑 Testing key {index + 1}: `{key}`\n{result}",
-                    parse_mode='Markdown'
-                )
-            else:
-                await update.message.reply_text(
-                    f"⚠️ Invalid index. Please provide a number between 1 and {len(keys)}."
-                )
-        except ValueError:
-            await update.message.reply_text("⚠️ Please provide a valid number for the key index.")
-    else:
-        # Test all keys
-        results = []
-        for i, key in enumerate(keys):
-            result = test_gemini_key(key)
-            results.append(f"**{i + 1}.** `{key}`: {result}")
-        
-        response = "🔑 **Test Results for All Keys:**\n\n" + "\n".join(results)
-        await update.message.reply_text(response, parse_mode='Markdown')
-
-async def post_init(application: Application) -> None:
-    """Sets the bot's command menu after initialization."""
-    commands = [
-        BotCommand("start", "Start the bot"),
-        BotCommand("list", "List all keys"),
-        BotCommand("test", "Test a specific key or all keys"),  # Added test command
-    ]
-    await application.bot.set_my_commands(commands)
-
-def main() -> None:
-    """Sets up and runs the bot."""
-    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", start))
-    application.add_handler(CommandHandler("list", list_keys))
-    application.add_handler(CommandHandler("test", test_key))  # Added test command handler
     
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
 
