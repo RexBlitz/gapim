@@ -51,12 +51,12 @@ def get_api_keys_db():
 @lru_cache(maxsize=1)
 def _get_gemini_collection():
     """Cache collection reference."""
-    return get_api_keys_db()["gemini_keys_v2"] # Using a new collection for the new format
+    return get_api_keys_db()["gemini_keys"] # Using a new collection for the new format
 
 @lru_cache(maxsize=1)
 def _get_trash_collection():
     """Cache collection reference."""
-    return get_api_keys_db()["trash_keys_v2"]
+    return get_api_keys_db()["trash_keys"]
 
 def get_gemini_keys():
     """Retrieves a list of key objects e.g., [{'key': 'AIza...', 'name': 'MyKey'}]"""
