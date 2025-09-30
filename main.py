@@ -50,23 +50,13 @@ def get_api_keys_db():
 
 @lru_cache(maxsize=1)
 def _get_gemini_collection():
-    """Cache collection reference."""
-    return get_api_keys_db()["gemini_keys"] # Using a new collection for the new format
+    """Cache collection reference using original name."""
+    return get_api_keys_db()["gemini_keys"]
 
 @lru_cache(maxsize=1)
 def _get_trash_collection():
-    """Cache collection reference."""
+    """Cache collection reference using original name."""
     return get_api_keys_db()["trash_keys"]
-
-def get_gemini_keys():
-    """Retrieves a list of key objects e.g., [{'key': 'AIza...', 'name': 'MyKey'}]"""
-    try:
-        collection = _get_gemini_collection()
-        result = collection.find_one({"type": "keys"}, {"keys": 1, "_id": 0})
-        return result.get("keys", []) if result else []
-    except Exception as e:
-        logger.error(f"Error getting Gemini keys: {e}")
-        return []
 
 def save_gemini_keys(keys: list):
     """Saves a list of key objects."""
@@ -76,14 +66,32 @@ def save_gemini_keys(keys: list):
     except Exception as e:
         logger.error(f"Error saving Gemini keys: {e}")
 
-def get_trash_keys():
-    """Retrieves a list of trashed key objects."""
+def get_gemini_keys():
+    """
+    Retrieves keys and automatically migrates from old format (list of strings)
+    to new format (list of objects) if needed.
+    """
     try:
-        collection = _get_trash_collection()
-        result = collection.find_one({"type": "trashed"}, {"keys": 1, "_id": 0})
-        return result.get("keys", []) if result else []
+        collection = _get_gemini_collection()
+        result_doc = collection.find_one({"type": "keys"}, {"keys": 1, "_id": 0})
+        if not result_doc:
+            return []
+
+        keys_data = result_doc.get("keys", [])
+        if not keys_data:
+            return []
+
+        # Check the format of the first item to determine if migration is needed
+        if isinstance(keys_data[0], str):
+            logger.info("Old key format detected. Migrating to new object format.")
+            migrated_keys = [{"key": key_str, "name": None} for key_str in keys_data]
+            save_gemini_keys(migrated_keys) # Save migrated data back to DB
+            return migrated_keys
+        
+        return keys_data # Already in the new format
+        
     except Exception as e:
-        logger.error(f"Error getting trash keys: {e}")
+        logger.error(f"Error getting Gemini keys: {e}")
         return []
 
 def save_trash_keys(trash_list: list):
@@ -94,47 +102,65 @@ def save_trash_keys(trash_list: list):
     except Exception as e:
         logger.error(f"Error saving trash keys: {e}")
 
+def get_trash_keys():
+    """Retrieves trashed keys and handles backward compatibility."""
+    try:
+        collection = _get_trash_collection()
+        result_doc = collection.find_one({"type": "trashed"}, {"keys": 1, "_id": 0})
+        if not result_doc:
+            return []
+
+        keys_data = result_doc.get("keys", [])
+        if not keys_data:
+            return []
+
+        # Check format and migrate if necessary
+        if isinstance(keys_data[0], str):
+            logger.info("Old trash key format detected. Migrating.")
+            migrated_keys = [{"key": key_str, "name": None} for key_str in keys_data]
+            save_trash_keys(migrated_keys)
+            return migrated_keys
+        
+        if isinstance(keys_data[0], dict) and 'key' in keys_data[0]:
+             return keys_data
+
+        return []
+
+    except Exception as e:
+        logger.error(f"Error getting trash keys: {e}")
+        return []
+
 # --- 🔧 ASYNC API KEY TESTING ---
 async def test_gemini_key(api_key: str) -> tuple[str, str]:
-    """Async API key testing - MUCH FASTER!"""
+    """Async API key testing."""
     try:
         session = await get_aiohttp_session()
         params = {"key": api_key}
         data = {"contents": [{"parts": [{"text": "Hi"}]}]}
         async with session.post(GEMINI_API_URL, params=params, json=data) as response:
-            status_code = response.status
-            if status_code == 200: return "valid", "✅ Valid"
-            elif status_code == 429: return "rate_limited", "⚠️ Rate Limited"
-            elif status_code in (400, 401, 403): return "invalid", "❌ Invalid"
-            else: return "error", f"❓ Error {status_code}"
-    except asyncio.TimeoutError:
-        return "error", "❓ Timeout"
+            if response.status == 200: return "valid", "✅ Valid"
+            elif response.status == 429: return "rate_limited", "⚠️ Rate Limited"
+            elif response.status in (400, 401, 403): return "invalid", "❌ Invalid"
+            else: return "error", f"❓ Error {response.status}"
     except Exception as e:
         return "error", f"❓ Error: {str(e)[:20]}"
 
 async def test_keys_batch(keys: list[str]) -> list:
-    """Test multiple key strings concurrently - ULTRA FAST!"""
+    """Test multiple key strings concurrently."""
     tasks = [test_gemini_key(key) for key in keys]
     return await asyncio.gather(*tasks)
 
 # --- 🛠️ UTILITY FUNCTIONS ---
 def escape_markdown_v2(text: str) -> str:
-    """Ultra-fast markdown escaping."""
+    """Escapes text for Telegram MarkdownV2."""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 def parse_key_input(text: str) -> tuple[str | None, str | None]:
-    """
-    Parses 'key name' format. 
-    The name is everything that follows the key after a space.
-    Returns (key, name) or (None, None).
-    """
-    # This new regex looks for the key, then optionally captures everything after it.
+    """Parses 'key name' format."""
     match = re.match(r'^\s*(AIza[A-Za-z0-9_-]{35})(?:\s+(.*))?\s*$', text)
-    
     if match:
         key = match.group(1)
-        # Group 2 will be the rest of the string, or None if there's no name
         name = match.group(2).strip() if match.group(2) else None
         return key, name
     return None, None
@@ -146,9 +172,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
         f"👋 **Gemini API Key Manager**\n"
         f"📊 Keys: **{total_keys}** \\| Trash: **{trash_count}**\n\n"
-        f"• **To Add:** Send a key in the format:\n`AIza...key... (Optional Name)`\n"
+        f"• **To Add:** Send a key in the format:\n`AIza...key... Optional Name`\n"
         f"• `/list` \\- See all keys and their names\n"
-        f"• `/test` \\- Test all keys\n"
+        f"• `/test [key|index]` \\- Test all keys, a specific key, or by index\n"
         f"• `/del <index|trash>` \\- Delete a key or clear trash\n"
         f"• `/trash` \\- Trash management"
     )
@@ -171,12 +197,11 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
 async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles adding a single key sent directly or via /add command."""
     text_to_parse = update.message.text.strip()
     key, name = parse_key_input(text_to_parse)
 
     if not key:
-        return # Ignore messages that don't match the key format
+        return
 
     current_keys = get_gemini_keys()
     if any(entry['key'] == key for entry in current_keys):
@@ -187,34 +212,76 @@ async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYP
     current_keys.append(new_entry)
     save_gemini_keys(current_keys)
 
-    response = f"✅ Key saved\\."
+    response = f"✅ Key saved"
     if name:
-        response += f" with name **{escape_markdown_v2(name)}**\\."
+        response += f" with name **{escape_markdown_v2(name)}**"
+    response += "\\."
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
-
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keys = get_gemini_keys()
-    if not keys:
-        await update.message.reply_text("No keys to test\\.", parse_mode='MarkdownV2')
+    """Tests all keys, a specific key by index, or a raw key string."""
+    args = context.args
+    
+    # Case 1: No arguments -> Test all keys in the database
+    if not args:
+        keys = get_gemini_keys()
+        if not keys:
+            await update.message.reply_text("No keys in DB to test\\. Use `/test <key>` to test one\\.", parse_mode='MarkdownV2')
+            return
+
+        msg = await update.message.reply_text("🔄 Testing all stored keys\\.\\.\\.", parse_mode='MarkdownV2')
+        
+        key_strings_to_test = [entry['key'] for entry in keys]
+        results = await test_keys_batch(key_strings_to_test)
+        
+        response_lines = []
+        for i, (entry, (status, result)) in enumerate(zip(keys, results)):
+            line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'][:20])}\\.\\.\\.`"
+            if entry.get('name'):
+                line += f" \\({escape_markdown_v2(entry['name'])}\\)"
+            line += f": {escape_markdown_v2(result)}"
+            response_lines.append(line)
+            
+        response = "🔑 **Stored Keys Test Results:**\n\n" + "\n".join(response_lines)
+        await msg.edit_text(response, parse_mode='MarkdownV2')
         return
 
-    msg = await update.message.reply_text("🔄 Testing all keys\\.\\.\\.", parse_mode='MarkdownV2')
+    # Case 2: Argument provided -> could be index or raw key
+    argument = args[0]
     
-    # Extract just the key strings for batch testing
-    key_strings_to_test = [entry['key'] for entry in keys]
-    results = await test_keys_batch(key_strings_to_test)
-    
-    response_lines = []
-    for i, (entry, (status, result)) in enumerate(zip(keys, results)):
-        line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'][:20])}\\.\\.\\.`"
-        if entry.get('name'):
-            line += f" \\({escape_markdown_v2(entry['name'])}\\)"
-        line += f": {escape_markdown_v2(result)}"
-        response_lines.append(line)
-        
-    response = "🔑 **Test Results:**\n\n" + "\n".join(response_lines)
-    await msg.edit_text(response, parse_mode='MarkdownV2')
+    # Try to interpret as an index first
+    try:
+        index = int(argument) - 1
+        keys = get_gemini_keys()
+        if 0 <= index < len(keys):
+            entry_to_test = keys[index]
+            key_to_test = entry_to_test['key']
+            name = entry_to_test.get('name')
+            
+            msg = await update.message.reply_text(f"🔄 Testing key at index {index + 1}\\.\\.\\.", parse_mode='MarkdownV2')
+            status, result_text = await test_gemini_key(key_to_test)
+            
+            response = f"🔑 **Test Result \\(Index {index + 1}\\):**\n`{escape_markdown_v2(key_to_test)}`"
+            if name:
+                response += f" \\({escape_markdown_v2(name)}\\)"
+            response += f"\nStatus: {escape_markdown_v2(result_text)}"
+            await msg.edit_text(response, parse_mode='MarkdownV2')
+            return
+        else:
+            await update.message.reply_text(f"⚠️ Index out of range\\. Please use a number from 1 to {len(keys)}\\.", parse_mode='MarkdownV2')
+            return
+    except ValueError:
+        # Not a number, so check if it's a raw API key
+        if re.match(r'^AIza[A-Za-z0-9_-]{35}$', argument):
+            key_to_test = argument
+            msg = await update.message.reply_text(f"🔄 Testing provided key `{escape_markdown_v2(key_to_test[:15])}...`", parse_mode='MarkdownV2')
+            status, result_text = await test_gemini_key(key_to_test)
+            
+            response = f"🔑 **Ad\\-hoc Test Result:**\n`{escape_markdown_v2(key_to_test)}`\nStatus: {escape_markdown_v2(result_text)}"
+            await msg.edit_text(response, parse_mode='MarkdownV2')
+        else:
+            await update.message.reply_text("⚠️ Invalid argument\\. Provide a key index, a full API key, or no argument to test all keys\\.", parse_mode='MarkdownV2')
+
 
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
@@ -223,12 +290,11 @@ async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if args[0].lower() == 'trash':
-        # This part remains unchanged as it operates on the whole trash collection
         if not get_trash_keys():
-            await update.message.reply_text("📭 Trash is already empty.", parse_mode='MarkdownV2')
+            await update.message.reply_text("📭 Trash is already empty\\.", parse_mode='MarkdownV2')
             return
         keyboard = [[InlineKeyboardButton("💥 Yes, Delete All Permanently", callback_data="confirm_clear_trash"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_action")]]
-        await update.message.reply_text("⚠️ **ARE YOU SURE?**\nThis will permanently delete all keys in the trash.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='MarkdownV2')
+        await update.message.reply_text("⚠️ **ARE YOU SURE?**\nThis will permanently delete all keys in the trash\\.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='MarkdownV2')
         return
 
     try:
@@ -246,9 +312,7 @@ async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except (ValueError, IndexError):
         await update.message.reply_text("⚠️ Invalid argument\\. Use an index number or `trash`\\.", parse_mode='MarkdownV2')
 
-# --- TRASH MENU AND CALLBACKS (ADAPTED FOR NEW DATA STRUCTURE) ---
 async def trash_menu(update_or_query: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # This function's logic doesn't need to change
     keyboard = [
         [InlineKeyboardButton("🗑️ Trash Rate Limited", callback_data="trash_rate")],
         [InlineKeyboardButton("🗑️ Trash Invalid (Permanent)", callback_data="trash_invalid")],
@@ -263,132 +327,102 @@ async def trash_menu(update_or_query: Update | CallbackQuery, context: ContextTy
     else:
         await update_or_query.message.reply_text(text=menu_text, reply_markup=reply_markup, parse_mode='MarkdownV2')
 
-async def confirm_trash_rate(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    # Simplified router for different button presses
+    if data == "trash_rate":
+        await query.edit_message_text("Move rate-limited keys to trash?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="confirm_trash_rate"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_action")]]), parse_mode='MarkdownV2')
+    elif data == "confirm_trash_rate":
+        await execute_trash_operation(query, context, "rate_limited")
+    elif data == "trash_invalid":
+        await query.edit_message_text("Permanently delete invalid keys?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="confirm_trash_invalid"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_action")]]), parse_mode='MarkdownV2')
+    elif data == "confirm_trash_invalid":
+        await execute_trash_operation(query, context, "invalid")
+    elif data == "restore":
+        await execute_restore(query, context)
+    elif data == "confirm_clear_trash":
+        save_trash_keys([])
+        await query.edit_message_text("✅ Trash cleared permanently.", parse_mode='MarkdownV2')
+    elif data == "cancel_action":
+        await query.edit_message_text("❌ Action cancelled.", parse_mode='MarkdownV2')
+    else:
+        await query.edit_message_text("This action is not yet implemented.", parse_mode='MarkdownV2')
+
+async def execute_trash_operation(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, status_to_trash: str):
     await query.edit_message_text("🔄 Processing\\.\\.\\.", parse_mode='MarkdownV2')
     keys = get_gemini_keys()
     trash_list = get_trash_keys()
-    
     results = await test_keys_batch([entry['key'] for entry in keys])
     
-    moved_count = 0
-    new_keys = []
-    # Operate on the full entry object
+    new_keys, moved_count = [], 0
     for entry, (status, _) in zip(keys, results):
-        if status == "rate_limited":
-            trash_list.append(entry) # Move the whole object
+        if status == status_to_trash:
+            if status_to_trash == "rate_limited":
+                trash_list.append(entry)
             moved_count += 1
         else:
             new_keys.append(entry)
     
     if moved_count > 0:
         save_gemini_keys(new_keys)
-        save_trash_keys(trash_list)
-    
-    await query.edit_message_text(f"✅ Moved {moved_count} rate\\-limited keys to trash\\.", parse_mode='MarkdownV2')
+        if status_to_trash == "rate_limited":
+            save_trash_keys(trash_list)
+        
+    action_word = "Moved to trash" if status_to_trash == "rate_limited" else "Permanently deleted"
+    await query.edit_message_text(f"✅ {action_word} {moved_count} key\\(s\\)\\.", parse_mode='MarkdownV2')
     await trash_menu(query, context)
 
-async def confirm_trash_invalid(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await query.edit_message_text("🔄 Processing\\.\\.\\.", parse_mode='MarkdownV2')
-    keys = get_gemini_keys()
-    results = await test_keys_batch([entry['key'] for entry in keys])
-    
-    deleted_count = 0
-    new_keys = []
-    for entry, (status, _) in zip(keys, results):
-        if status == "invalid":
-            deleted_count += 1 # Just skip it
-        else:
-            new_keys.append(entry)
-            
-    if deleted_count > 0:
-        save_gemini_keys(new_keys)
-    
-    await query.edit_message_text(f"🗑️ Permanently deleted {deleted_count} invalid keys\\.", parse_mode='MarkdownV2')
-    await trash_menu(query, context)
-
-async def confirm_restore(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def execute_restore(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("🔄 Testing trash\\.\\.\\.", parse_mode='MarkdownV2')
-    keys = get_gemini_keys()
+    live_keys = get_gemini_keys()
     trash_list = get_trash_keys()
-    
     if not trash_list:
-        await query.edit_message_text("📭 Trash is empty\\.", parse_mode='MarkdownV2')
-        await trash_menu(query, context)
-        return
-    
+        await query.edit_message_text("📭 Trash is empty.", parse_mode='MarkdownV2'); return
+
     results = await test_keys_batch([entry['key'] for entry in trash_list])
     
-    restored_count = 0
-    new_trash = []
-    # Restore the whole entry object
+    new_trash, restored_count = [], 0
     for entry, (status, _) in zip(trash_list, results):
         if status == "valid":
-            keys.append(entry)
+            live_keys.append(entry)
             restored_count += 1
         else:
             new_trash.append(entry)
-    
+            
     if restored_count > 0:
-        save_gemini_keys(keys)
+        save_gemini_keys(live_keys)
         save_trash_keys(new_trash)
     
-    await query.edit_message_text(f"🔄 Restored {restored_count} keys\\.", parse_mode='MarkdownV2')
+    await query.edit_message_text(f"🔄 Restored {restored_count} key\\(s\\)\\.", parse_mode='MarkdownV2')
     await trash_menu(query, context)
 
-# All other handlers (button_callback, trash menu display, etc.) can remain largely the same,
-# as they will now pass around the full key object {'key': ..., 'name': ...}
-# The main() and post_init() functions also remain the same.
-
-# --- MAIN APPLICATION SETUP ---
-# NOTE: The other trash handlers are omitted for brevity but they follow the same pattern
-# of operating on the full key object. You can adapt them easily.
-# For example, view_trash would be adapted similarly to list_keys.
+async def post_init(application: Application) -> None:
+    await application.bot.set_my_commands([
+        BotCommand("start", "Start bot and see help"),
+        BotCommand("add", "Add a key with an optional name"),
+        BotCommand("list", "List keys and their names"),
+        BotCommand("test", "Test by key, index, or all"),
+        BotCommand("del", "Delete a key or clear trash"),
+        BotCommand("trash", "Trash management"),
+    ])
 
 def main() -> None:
-    """Run the bot."""
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Add Command Handlers
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", start))
     application.add_handler(CommandHandler("list", list_keys))
     application.add_handler(CommandHandler("test", test_key))
     application.add_handler(CommandHandler("del", del_key))
     application.add_handler(CommandHandler("trash", trash_menu))
-    application.add_handler(CommandHandler("add", handle_potential_key)) # /add now uses the same handler
-
-    # Add Callback & Message Handlers
-    # A full implementation would require adapting all button_callback options
-    # Here we only show the main ones for brevity
-    # A complete implementation would require adapting all trash functions
-    # For now, we stub a simplified callback handler
-    async def simplified_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        data = query.data
-        if data == "confirm_trash_rate": await confirm_trash_rate(query, context)
-        elif data == "confirm_trash_invalid": await confirm_trash_invalid(query, context)
-        elif data == "confirm_restore": await confirm_restore(query, context)
-        elif data == "cancel_action": await query.edit_message_text("❌ Action cancelled.", parse_mode='MarkdownV2')
-        else: await query.edit_message_text("This action is not fully implemented in this example.", parse_mode='MarkdownV2')
-
-    application.add_handler(CallbackQueryHandler(simplified_button_callback))
+    application.add_handler(CommandHandler("add", handle_potential_key))
+    application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
 
-    logger.info("🚀 Gemini Key Manager Bot (v2) is running!")
+    logger.info("🚀 Gemini Key Manager Bot is running!")
     application.run_polling()
-
-async def post_init(application: Application) -> None:
-    """Set bot commands."""
-    commands = [
-        BotCommand("start", "Start bot and see help"),
-        BotCommand("add", "Add a key with an optional name"),
-        BotCommand("list", "List keys and their names"),
-        BotCommand("test", "Test all keys"),
-        BotCommand("del", "Delete a key or clear trash"),
-        BotCommand("trash", "Trash management"),
-    ]
-    await application.bot.set_my_commands(commands)
 
 if __name__ == '__main__':
     main()
