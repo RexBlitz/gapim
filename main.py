@@ -80,10 +80,10 @@ def get_gemini_keys():
         if isinstance(keys_data[0], str):
             logger.info("Old key format detected. Migrating to new object format.")
             migrated_keys = [{"key": key_str, "name": None} for key_str in keys_data]
-            save_gemini_keys(migrated_keys)
+            save_gemini_keys(migrated_keys) # Save migrated data back to DB
             return migrated_keys
         
-        return keys_data
+        return keys_data # Already in the new format
         
     except Exception as e:
         logger.error(f"Error getting Gemini keys: {e}")
@@ -117,6 +117,7 @@ def escape_markdown_v2(text: str) -> str:
 
 def parse_key_input(text: str) -> tuple[str | None, str | None]:
     """Parses 'key name' format."""
+    # Matches 'AIza...key... Optional Name'
     match = re.match(r'^\s*(AIza[A-Za-z0-9_-]{35})(?:\s+(.*))?\s*$', text)
     if match:
         key = match.group(1)
@@ -124,13 +125,9 @@ def parse_key_input(text: str) -> tuple[str | None, str | None]:
         return key, name
     return None, None
 
-def parse_batch_keys(text: str) -> list[str]:
-    """Parse keys separated by comma, space, or newline."""
-    # Split by comma, space, or newline
-    keys = re.split(r'[,\s\n]+', text.strip())
-    # Filter valid API keys
-    valid_keys = [k for k in keys if re.match(r'^AIza[A-Za-z0-9_-]{35}$', k)]
-    return valid_keys
+def _is_valid_gemini_key(key: str) -> bool:
+    """Checks if a string looks like a valid Gemini API key (AIza + 35 chars)."""
+    return re.fullmatch(r'AIza[A-Za-z0-9_-]{35}', key) is not None
 
 # --- 🤖 BOT HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -138,15 +135,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
         f"👋 **Gemini API Key Manager**\n"
         f"📊 Keys: **{total_keys}**\n\n"
-        f"**Single Key Operations:**\n"
-        f"• Send: `AIza...key... Optional Name`\n"
-        f"• `/list` \\- See all keys\n"
-        f"• `/test [key|index]` \\- Test keys\n"
-        f"• `/del <index>` \\- Delete by index\n\n"
-        f"**Batch Operations:**\n"
-        f"• `/add batch <name> <key1>,<key2>,...`\n"
-        f"  _Keys named: name1, name2, etc\\._\n"
-        f"• `/del batch <name>` \\- Delete all keys with that batch name"
+        f"• **To Add Single Key:** Send a key or use `/add`:\n"
+        f"`AIza...key... Optional Name`\n"
+        f"• **To Add Batch Keys:** Use the command:\n"
+        f"`/add batch <name> <key1>,<key2>,<key3>`\n"
+        f"• `/list` \\- See all keys and their names\n"
+        f"• `/test [key|index]` \\- Test all keys, a specific key, or by index\n"
+        f"• `/del <index>` or `/del batch <name>` \\- Delete a key or a batch"
     )
     await update.message.reply_text(help_text, parse_mode='MarkdownV2')
 
@@ -158,95 +153,100 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     key_lines = []
     for i, entry in enumerate(keys):
-        line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'][:25])}\\.\\.\\.`"
+        line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}`"
         if entry.get('name'):
-            line += f" \\- _{escape_markdown_v2(entry['name'])}_"
+            line += f" \\({escape_markdown_v2(entry['name'])}\\)"
         key_lines.append(line)
 
     response = "🔑 **Stored Keys:**\n\n" + "\n".join(key_lines)
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
-async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /add command for both single and batch operations."""
-    if not context.args:
-        await update.message.reply_text(
-            "**Usage:**\n"
-            "• `/add <key> [name]` \\- Add single key\n"
-            "• `/add batch <batch_name> <key1>,<key2>,...` \\- Add multiple keys",
-            parse_mode='MarkdownV2'
-        )
-        return
+async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles both single key addition and batch key addition."""
     
-    # Check if it's a batch operation
-    if context.args[0].lower() == "batch":
-        if len(context.args) < 3:
+    text_input = update.message.text.strip()
+    current_keys = get_gemini_keys()
+    
+    args = context.args if context.args is not None else []
+    
+    # Check for /add batch <name> <key1>,<key2>...
+    # This must be a command (starts with /add) AND the first argument must be 'batch'
+    if text_input.lower().startswith('/add') and args and args[0].lower() == 'batch':
+        
+        # ⚠️ FIX: Ensure we have the minimum required arguments: 'batch', <name>, and <keys>
+        if len(args) < 3:
             await update.message.reply_text(
-                "⚠️ Usage: `/add batch <batch_name> <key1>,<key2>,...`",
+                "Usage: `/add batch <name> <key1>,<key2>,<key3>...`\n"
+                "Example: `/add batch test_run AIza...key1,AIza...key2`",
                 parse_mode='MarkdownV2'
             )
             return
+
+        # Arguments are: [0:'batch', 1:'<name>', 2:'key1,key2,...']
+        batch_name = args[1] 
+        # Join the rest of the arguments to handle cases where keys might be spaced oddly
+        keys_input = " ".join(args[2:]) 
+
+        key_strings = [s.strip() for s in keys_input.split(',') if s.strip()]
         
-        batch_name = context.args[1]
-        keys_text = " ".join(context.args[2:])
-        keys_to_add = parse_batch_keys(keys_text)
-        
-        if not keys_to_add:
-            await update.message.reply_text("⚠️ No valid keys found\\.", parse_mode='MarkdownV2')
+        if not key_strings:
+            await update.message.reply_text("⚠️ No keys found in the input\\.", parse_mode='MarkdownV2')
             return
-        
-        current_keys = get_gemini_keys()
+
+        new_entries = []
         added_count = 0
         duplicate_count = 0
         
-        for idx, key in enumerate(keys_to_add, 1):
-            if any(entry['key'] == key for entry in current_keys):
-                duplicate_count += 1
-                continue
-            
-            new_entry = {"key": key, "name": f"{batch_name}{idx}"}
-            current_keys.append(new_entry)
-            added_count += 1
-        
-        save_gemini_keys(current_keys)
-        
-        response = f"✅ Batch **{escape_markdown_v2(batch_name)}**: Added **{added_count}** keys"
-        if duplicate_count > 0:
-            response += f" \\({duplicate_count} duplicates skipped\\)"
-        response += "\\."
-        await update.message.reply_text(response, parse_mode='MarkdownV2')
-    
-    else:
-        # Single key addition
-        key_text = " ".join(context.args)
-        key, name = parse_key_input(key_text)
-        
-        if not key:
-            await update.message.reply_text("⚠️ Invalid key format\\.", parse_mode='MarkdownV2')
-            return
-        
-        current_keys = get_gemini_keys()
-        if any(entry['key'] == key for entry in current_keys):
-            await update.message.reply_text("⚠️ Key already saved\\.", parse_mode='MarkdownV2')
-            return
-        
-        new_entry = {"key": key, "name": name}
-        current_keys.append(new_entry)
-        save_gemini_keys(current_keys)
-        
-        response = f"✅ Key saved"
-        if name:
-            response += f" with name **{escape_markdown_v2(name)}**"
-        response += "\\."
-        await update.message.reply_text(response, parse_mode='MarkdownV2')
+        for i, key_str in enumerate(key_strings):
+            if _is_valid_gemini_key(key_str):
+                if any(entry['key'] == key_str for entry in current_keys):
+                    duplicate_count += 1
+                    continue
+                
+                key_name = f"{batch_name}-{i + 1}"
+                new_entries.append({"key": key_str, "name": key_name})
+                added_count += 1
+            else:
+                logger.warning(f"Invalid key format skipped in batch: {key_str}")
 
-async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text_to_parse = update.message.text.strip()
+        if not new_entries:
+            await update.message.reply_text(
+                f"⚠️ No new valid keys to add\\. {duplicate_count} key\\(s\\) were duplicates or invalid\\.",
+                parse_mode='MarkdownV2'
+            )
+            return
+
+        current_keys.extend(new_entries)
+        save_gemini_keys(current_keys)
+        
+        total_keys = len(current_keys)
+
+        response = (
+            f"🎉 **Batch Added Successfully\\!**\n"
+            f"• **Batch Name:** `{escape_markdown_v2(batch_name)}`\n"
+            f"• **Keys Added:** {added_count}\n"
+            f"• **Duplicates Skipped:** {duplicate_count}\n"
+            f"• **Total Keys:** **{total_keys}**"
+        )
+        await update.message.reply_text(response, parse_mode='MarkdownV2')
+        return
+
+    # Handle single key addition (either from /add or plain text message)
+    if text_input.startswith('/add'):
+        text_to_parse = " ".join(args)
+    else:
+        text_to_parse = text_input
+
+
     key, name = parse_key_input(text_to_parse)
 
     if not key:
+        if not text_input.startswith('/add'):
+             return
+        await update.message.reply_text("Usage:\n`AIza...key... Optional Name`", parse_mode='MarkdownV2')
         return
 
-    current_keys = get_gemini_keys()
+
     if any(entry['key'] == key for entry in current_keys):
         await update.message.reply_text("⚠️ Key already saved\\.", parse_mode='MarkdownV2')
         return
@@ -254,17 +254,23 @@ async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYP
     new_entry = {"key": key, "name": name}
     current_keys.append(new_entry)
     save_gemini_keys(current_keys)
+    
+    total_keys = len(current_keys)
 
     response = f"✅ Key saved"
     if name:
         response += f" with name **{escape_markdown_v2(name)}**"
-    response += "\\."
+        
+    response += f"\\. \\(Total Keys: **{total_keys}**\\)"
+    
     await update.message.reply_text(response, parse_mode='MarkdownV2')
+
 
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Tests all keys, a specific key by index, or a raw key string."""
-    args = context.args
+    args = context.args if context.args is not None else []
     
+    # Case 1: No arguments -> Test all keys in the database
     if not args:
         keys = get_gemini_keys()
         if not keys:
@@ -288,8 +294,10 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.edit_text(response, parse_mode='MarkdownV2')
         return
 
+    # Case 2: Argument provided -> could be index or raw key
     argument = args[0]
     
+    # Try to interpret as an index first
     try:
         index = int(argument) - 1
         keys = get_gemini_keys()
@@ -311,7 +319,8 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(f"⚠️ Index out of range\\. Please use a number from 1 to {len(keys)}\\.", parse_mode='MarkdownV2')
             return
     except ValueError:
-        if re.match(r'^AIza[A-Za-z0-9_-]{35}$', argument):
+        # Not a number, so check if it's a raw API key
+        if _is_valid_gemini_key(argument):
             key_to_test = argument
             msg = await update.message.reply_text(f"🔄 Testing provided key `{escape_markdown_v2(key_to_test[:15])}...`", parse_mode='MarkdownV2')
             status, result_text = await test_gemini_key(key_to_test)
@@ -321,75 +330,66 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             await update.message.reply_text("⚠️ Invalid argument\\. Provide a key index, a full API key, or no argument to test all keys\\.", parse_mode='MarkdownV2')
 
+
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Delete a single key by index or all keys in a batch by name."""
-    args = context.args
+    """Deletes a key by index or a batch of keys by name."""
+    args = context.args if context.args is not None else []
+    keys = get_gemini_keys()
+
     if not args:
-        await update.message.reply_text(
-            "**Usage:**\n"
-            "• `/del <index>` \\- Delete by index\n"
-            "• `/del batch <batch_name>` \\- Delete all keys with batch name",
-            parse_mode='MarkdownV2'
-        )
+        await update.message.reply_text("Usage:\n`/del <index>` or `/del batch <name>`", parse_mode='MarkdownV2')
         return
-    
-    # Check if it's a batch deletion
-    if args[0].lower() == "batch":
-        if len(args) < 2:
+
+    # Check for batch deletion command: /del batch <name>
+    if args[0].lower() == 'batch' and len(args) >= 2:
+        batch_name_to_del = args[1]
+        
+        # Keys to keep (those not belonging to the batch)
+        keys_to_keep = [
+            entry for entry in keys 
+            if not entry.get('name', '').startswith(f"{batch_name_to_del}-")
+        ]
+        
+        deleted_count = len(keys) - len(keys_to_keep)
+        
+        if deleted_count > 0:
+            save_gemini_keys(keys_to_keep)
+            total_keys = len(keys_to_keep)
             await update.message.reply_text(
-                "⚠️ Usage: `/del batch <batch_name>`",
+                f"🗑️ **Batch Deleted!**\n"
+                f"• **Batch Name:** `{escape_markdown_v2(batch_name_to_del)}`\n"
+                f"• **Keys Removed:** {deleted_count}\n"
+                f"• **Total Keys Remaining:** **{total_keys}**",
                 parse_mode='MarkdownV2'
             )
-            return
-        
-        batch_name = args[1]
-        keys = get_gemini_keys()
-        
-        # Find all keys that start with the batch name followed by a number
-        keys_to_delete = []
-        remaining_keys = []
-        
-        for entry in keys:
-            if entry.get('name') and entry['name'].startswith(batch_name):
-                # Check if the remaining part after batch_name is a number
-                suffix = entry['name'][len(batch_name):]
-                if suffix.isdigit():
-                    keys_to_delete.append(entry)
-                else:
-                    remaining_keys.append(entry)
-            else:
-                remaining_keys.append(entry)
-        
-        if not keys_to_delete:
+        else:
             await update.message.reply_text(
-                f"⚠️ No keys found with batch name **{escape_markdown_v2(batch_name)}**\\.",
+                f"⚠️ No keys found for batch name `{escape_markdown_v2(batch_name_to_del)}` to delete.", 
                 parse_mode='MarkdownV2'
             )
-            return
-        
-        save_gemini_keys(remaining_keys)
-        
-        await update.message.reply_text(
-            f"🗑️ Deleted **{len(keys_to_delete)}** keys from batch **{escape_markdown_v2(batch_name)}**\\.",
-            parse_mode='MarkdownV2'
-        )
-    
-    else:
-        # Single key deletion by index
-        try:
-            keys = get_gemini_keys()
-            index = int(args[0]) - 1
-            if 0 <= index < len(keys):
-                deleted_entry = keys.pop(index)
-                save_gemini_keys(keys)
-                
-                key_part = escape_markdown_v2(deleted_entry['key'][:30])
-                name_part = f" \\({escape_markdown_v2(deleted_entry['name'])}\\)" if deleted_entry.get('name') else ""
-                await update.message.reply_text(f"🗑️ Deleted key {index + 1}:\n`{key_part}\\.\\.\\.`{name_part}", parse_mode='MarkdownV2')
-            else:
-                await update.message.reply_text(f"⚠️ Invalid index\\. Must be 1\\-{len(keys)}\\.", parse_mode='MarkdownV2')
-        except (ValueError, IndexError):
-            await update.message.reply_text("⚠️ Invalid argument\\. Use an index number\\.", parse_mode='MarkdownV2')
+        return
+
+    # Handle single key deletion by index (original logic)
+    try:
+        index = int(args[0]) - 1
+        if 0 <= index < len(keys):
+            deleted_entry = keys.pop(index)
+            save_gemini_keys(keys)
+            
+            total_keys = len(keys)
+            key_part = escape_markdown_v2(deleted_entry['key'][:30])
+            name_part = f" \\({escape_markdown_v2(deleted_entry['name'])}\\)" if deleted_entry.get('name') else ""
+            await update.message.reply_text(
+                f"🗑️ Deleted key {index + 1}:\n"
+                f"`{key_part}\\.\\.\\.`{name_part}\n"
+                f"\\(Total Keys: **{total_keys}**\\)", 
+                parse_mode='MarkdownV2'
+            )
+        else:
+            await update.message.reply_text(f"⚠️ Invalid index\\. Must be 1\\-{len(keys)}\\.", parse_mode='MarkdownV2')
+    except ValueError:
+        await update.message.reply_text("⚠️ Invalid argument\\. Use an index number or the format `/del batch <name>`\\.", parse_mode='MarkdownV2')
+
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -401,28 +401,43 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         await query.edit_message_text("❌ Action not supported or cancelled.", parse_mode='MarkdownV2')
 
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("start", "Start bot and see help"),
-        BotCommand("add", "Add key(s) - single or batch"),
-        BotCommand("list", "List all keys"),
-        BotCommand("test", "Test keys by index or all"),
-        BotCommand("del", "Delete by index or batch"),
+        BotCommand("add", "Add a key or a batch of keys"),
+        BotCommand("list", "List keys and their names"),
+        BotCommand("test", "Test by key, index, or all"),
+        BotCommand("del", "Delete a key by index or batch name"),
     ])
 
 def main() -> None:
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("add", add_command))
     application.add_handler(CommandHandler("list", list_keys))
     application.add_handler(CommandHandler("test", test_key))
     application.add_handler(CommandHandler("del", del_key))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
+    
+    application.add_handler(CommandHandler("add", add_key)) 
+    application.add_handler(CallbackQueryHandler(button_callback)) 
+    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_key))
 
     logger.info("🚀 Gemini Key Manager Bot is running!")
     application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        async def close_session():
+            if _aiohttp_session and not _aiohttp_session.closed:
+                await _aiohttp_session.close()
+        try:
+             asyncio.run(close_session())
+        except RuntimeError: 
+             pass 
+        if _mongo_client:
+            _mongo_client.close()
+            logger.info("MongoDB client closed.")
