@@ -185,7 +185,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         key_strings = [s.strip() for s in keys_input.split(',') if s.strip()]
         
         if not key_strings:
-            await update.message.reply_text("⚠️ No keys found in the input.", parse_mode='MarkdownV2')
+            await update.message.reply_text("⚠️ No keys found in the input\\.", parse_mode='MarkdownV2')
             return
 
         new_entries = []
@@ -206,7 +206,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if not new_entries:
             await update.message.reply_text(
-                f"⚠️ No new valid keys to add. {duplicate_count} key(s) were duplicates or invalid.",
+                f"⚠️ No new valid keys to add\\. {duplicate_count} key\\(s\\) were duplicates or invalid\\.",
                 parse_mode='MarkdownV2'
             )
             return
@@ -216,11 +216,12 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
         total_keys = len(current_keys)
 
+
         response = (
-            f"🎉 **Batch Added Successfully!**\n"
-            f"• **Batch Name:** `{escape_markdown_v2(batch_name)}`\n"
-            f"• **Keys Added:** {added_count}\n"
-            f"• **Duplicates Skipped:** {duplicate_count}\n"
+            f"🎉 **Batch Added Successfully\\!**\n"
+            f"• **Batch Name:** `{escape_markdown_v2(batch_name)}`\n" # Name is escaped
+            f"• **Keys Added:** {added_count}\n" # Number is safe
+            f"• **Duplicates Skipped:** {duplicate_count}\n" # Number is safe
             f"• **Total Keys:** **{total_keys}**"
         )
         await update.message.reply_text(response, parse_mode='MarkdownV2')
@@ -228,21 +229,16 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Handle single key addition (either from /add or plain text message)
     if text_input.startswith('/add'):
-        # If /add is used without "batch", treat the rest of the text as a single key input
-        # This allows /add AIza...key Name
         text_to_parse = " ".join(context.args)
     else:
-        # This is a plain message handler path
         text_to_parse = text_input
 
 
     key, name = parse_key_input(text_to_parse)
 
     if not key:
-        # If it was a plain message and not a key, just ignore it.
         if not text_input.startswith('/add'):
              return
-        # If it was /add command but failed to parse, show usage
         await update.message.reply_text("Usage:\n`AIza...key... Optional Name`", parse_mode='MarkdownV2')
         return
 
@@ -257,13 +253,15 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     total_keys = len(current_keys)
 
+    
     response = f"✅ Key saved"
     if name:
         response += f" with name **{escape_markdown_v2(name)}**"
+        
+
     response += f"\\. \\(Total Keys: **{total_keys}**\\)"
     
     await update.message.reply_text(response, parse_mode='MarkdownV2')
-
 
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Tests all keys, a specific key by index, or a raw key string."""
