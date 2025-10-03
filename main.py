@@ -117,7 +117,7 @@ def escape_markdown_v2(text: str) -> str:
 
 def parse_key_input(text: str) -> tuple[str | None, str | None]:
     """Parses 'key name' format."""
-    # Matches 'AIza...key... Optional Name'
+    # This utility is only used for single key parsing now.
     match = re.match(r'^\s*(AIza[A-Za-z0-9_-]{35})(?:\s+(.*))?\s*$', text)
     if match:
         key = match.group(1)
@@ -126,7 +126,7 @@ def parse_key_input(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 def _is_valid_gemini_key(key: str) -> bool:
-    """Checks if a string looks like a valid Gemini API key (AIza + 35 chars)."""
+    """Checks if a string looks like a valid Gemini API key."""
     return re.fullmatch(r'AIza[A-Za-z0-9_-]{35}', key) is not None
 
 # --- 🤖 BOT HANDLERS ---
@@ -167,14 +167,10 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text_input = update.message.text.strip()
     current_keys = get_gemini_keys()
     
-    args = context.args if context.args is not None else []
-    
     # Check for /add batch <name> <key1>,<key2>...
-    # This must be a command (starts with /add) AND the first argument must be 'batch'
-    if text_input.lower().startswith('/add') and args and args[0].lower() == 'batch':
-        
-        # ⚠️ FIX: Ensure we have the minimum required arguments: 'batch', <name>, and <keys>
-        if len(args) < 3:
+    if text_input.lower().startswith('/add batch'):
+        args = context.args
+        if len(args) < 2:
             await update.message.reply_text(
                 "Usage: `/add batch <name> <key1>,<key2>,<key3>...`\n"
                 "Example: `/add batch test_run AIza...key1,AIza...key2`",
@@ -182,15 +178,14 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        # Arguments are: [0:'batch', 1:'<name>', 2:'key1,key2,...']
-        batch_name = args[1] 
-        # Join the rest of the arguments to handle cases where keys might be spaced oddly
-        keys_input = " ".join(args[2:]) 
+        # Arguments: [batch, name, key1,key2,key3...]
+        batch_name = args[1] # args[0] is 'batch'
+        keys_input = " ".join(args[2:])
 
         key_strings = [s.strip() for s in keys_input.split(',') if s.strip()]
         
         if not key_strings:
-            await update.message.reply_text("⚠️ No keys found in the input\\.", parse_mode='MarkdownV2')
+            await update.message.reply_text("⚠️ No keys found in the input.", parse_mode='MarkdownV2')
             return
 
         new_entries = []
@@ -211,7 +206,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if not new_entries:
             await update.message.reply_text(
-                f"⚠️ No new valid keys to add\\. {duplicate_count} key\\(s\\) were duplicates or invalid\\.",
+                f"⚠️ No new valid keys to add. {duplicate_count} key(s) were duplicates or invalid.",
                 parse_mode='MarkdownV2'
             )
             return
@@ -222,7 +217,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         total_keys = len(current_keys)
 
         response = (
-            f"🎉 **Batch Added Successfully\\!**\n"
+            f"🎉 **Batch Added Successfully!**\n"
             f"• **Batch Name:** `{escape_markdown_v2(batch_name)}`\n"
             f"• **Keys Added:** {added_count}\n"
             f"• **Duplicates Skipped:** {duplicate_count}\n"
@@ -233,16 +228,21 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Handle single key addition (either from /add or plain text message)
     if text_input.startswith('/add'):
-        text_to_parse = " ".join(args)
+        # If /add is used without "batch", treat the rest of the text as a single key input
+        # This allows /add AIza...key Name
+        text_to_parse = " ".join(context.args)
     else:
+        # This is a plain message handler path
         text_to_parse = text_input
 
 
     key, name = parse_key_input(text_to_parse)
 
     if not key:
+        # If it was a plain message and not a key, just ignore it.
         if not text_input.startswith('/add'):
              return
+        # If it was /add command but failed to parse, show usage
         await update.message.reply_text("Usage:\n`AIza...key... Optional Name`", parse_mode='MarkdownV2')
         return
 
@@ -260,7 +260,6 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     response = f"✅ Key saved"
     if name:
         response += f" with name **{escape_markdown_v2(name)}**"
-        
     response += f"\\. \\(Total Keys: **{total_keys}**\\)"
     
     await update.message.reply_text(response, parse_mode='MarkdownV2')
@@ -268,7 +267,7 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Tests all keys, a specific key by index, or a raw key string."""
-    args = context.args if context.args is not None else []
+    args = context.args
     
     # Case 1: No arguments -> Test all keys in the database
     if not args:
@@ -333,7 +332,7 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Deletes a key by index or a batch of keys by name."""
-    args = context.args if context.args is not None else []
+    args = context.args
     keys = get_gemini_keys()
 
     if not args:
@@ -345,6 +344,7 @@ async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         batch_name_to_del = args[1]
         
         # Keys to keep (those not belonging to the batch)
+        # Batch keys are named 'batch_name-1', 'batch_name-2', etc.
         keys_to_keep = [
             entry for entry in keys 
             if not entry.get('name', '').startswith(f"{batch_name_to_del}-")
@@ -419,24 +419,29 @@ def main() -> None:
     application.add_handler(CommandHandler("test", test_key))
     application.add_handler(CommandHandler("del", del_key))
     
+    # Use the same command handler for both single and batch addition
     application.add_handler(CommandHandler("add", add_key)) 
     application.add_handler(CallbackQueryHandler(button_callback)) 
     
+    # Message handler for plain text single key addition
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_key))
 
     logger.info("🚀 Gemini Key Manager Bot is running!")
     application.run_polling()
 
 if __name__ == '__main__':
+    # Ensure aiohttp session is closed properly when the application stops
     try:
         main()
     finally:
         async def close_session():
             if _aiohttp_session and not _aiohttp_session.closed:
                 await _aiohttp_session.close()
+        # This part might need proper integration with Application shutdown hooks 
+        # for a clean exit, but for a simple script, running a cleanup task works.
         try:
              asyncio.run(close_session())
-        except RuntimeError: 
+        except RuntimeError: # Ignore if event loop is already running/closed
              pass 
         if _mongo_client:
             _mongo_client.close()
