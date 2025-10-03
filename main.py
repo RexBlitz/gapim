@@ -167,9 +167,12 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text_input = update.message.text.strip()
     current_keys = get_gemini_keys()
     
+    # 🐛 FIX: Ensure context.args is a list, even if it's None (i.e., no arguments were provided).
+    args = context.args if context.args is not None else []
+    
     # Check for /add batch <name> <key1>,<key2>...
     if text_input.lower().startswith('/add batch'):
-        args = context.args
+        # args[0] is 'batch', args[1] is <name>, args[2:] are keys
         if len(args) < 2:
             await update.message.reply_text(
                 "Usage: `/add batch <name> <key1>,<key2>,<key3>...`\n"
@@ -216,12 +219,11 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
         total_keys = len(current_keys)
 
-
         response = (
             f"🎉 **Batch Added Successfully\\!**\n"
-            f"• **Batch Name:** `{escape_markdown_v2(batch_name)}`\n" # Name is escaped
-            f"• **Keys Added:** {added_count}\n" # Number is safe
-            f"• **Duplicates Skipped:** {duplicate_count}\n" # Number is safe
+            f"• **Batch Name:** `{escape_markdown_v2(batch_name)}`\n"
+            f"• **Keys Added:** {added_count}\n"
+            f"• **Duplicates Skipped:** {duplicate_count}\n"
             f"• **Total Keys:** **{total_keys}**"
         )
         await update.message.reply_text(response, parse_mode='MarkdownV2')
@@ -229,16 +231,20 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Handle single key addition (either from /add or plain text message)
     if text_input.startswith('/add'):
-        text_to_parse = " ".join(context.args)
+        # If /add is used, args contains the text after the command.
+        text_to_parse = " ".join(args)
     else:
+        # This is a plain message handler path
         text_to_parse = text_input
 
 
     key, name = parse_key_input(text_to_parse)
 
     if not key:
+        # If it was a plain message and not a key, just ignore it.
         if not text_input.startswith('/add'):
              return
+        # If it was /add command but failed to parse (e.g., just /add or invalid key format), show usage.
         await update.message.reply_text("Usage:\n`AIza...key... Optional Name`", parse_mode='MarkdownV2')
         return
 
@@ -253,12 +259,10 @@ async def add_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     total_keys = len(current_keys)
 
-    
     response = f"✅ Key saved"
     if name:
         response += f" with name **{escape_markdown_v2(name)}**"
         
-
     response += f"\\. \\(Total Keys: **{total_keys}**\\)"
     
     await update.message.reply_text(response, parse_mode='MarkdownV2')
