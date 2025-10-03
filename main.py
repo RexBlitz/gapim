@@ -145,9 +145,8 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     key_lines = []
     for i, entry in enumerate(keys):
-        line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}`"
-        if entry.get('name'):
-            line += f" \\({escape_markdown_v2(entry['name'])}\\)"
+        line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}`" 
+        
         key_lines.append(line)
 
     response = "🔑 **Stored Keys:**\n\n" + "\n".join(key_lines)
