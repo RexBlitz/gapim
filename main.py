@@ -14,7 +14,7 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 # --- 🚀 GLOBAL INSTANCES FOR PERFORMANCE ---
 _mongo_client = None
@@ -113,11 +113,11 @@ async def test_keys_batch(keys: list[str]) -> list:
 def escape_markdown_v2(text: str) -> str:
     """Escapes text for Telegram MarkdownV2."""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(escape_chars)}])', r'\\1', text)
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 def parse_key_input(text: str) -> tuple[str | None, str | None]:
     """Parses 'key name' format."""
-    match = re.match(r'^\s*(AIza[A-Za-z0-9_-]{35})(?:\s+(.))?\s$', text)
+    match = re.match(r'^\s*(AIza[A-Za-z0-9_-]{35})(?:\s+(.*))?\s*$', text)
     if match:
         key = match.group(1)
         name = match.group(2).strip() if match.group(2) else None
@@ -128,28 +128,28 @@ def parse_key_input(text: str) -> tuple[str | None, str | None]:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     total_keys = len(get_gemini_keys())
     help_text = (
-        f"👋 Gemini API Key Manager\n"
-        f"📊 Keys: {total_keys}\n\n"
-        f"• To Add: Send a key in the format:\nAIza...key... Optional Name\n"
-        f"• /list \- See all keys and their names\n"
-        f"• /test [key|index] \- Test all keys, a specific key, or by index\n"
-        f"• /del <index> \- Delete a key by index"
+        f"👋 **Gemini API Key Manager**\n"
+        f"📊 Keys: **{total_keys}**\n\n"
+        f"• **To Add:** Send a key in the format:\n`AIza...key... Optional Name`\n"
+        f"• `/list` \\- See all keys and their names\n"
+        f"• `/test [key|index]` \\- Test all keys, a specific key, or by index\n"
+        f"• `/del <index>` \\- Delete a key by index"
     )
     await update.message.reply_text(help_text, parse_mode='MarkdownV2')
 
 async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keys = get_gemini_keys()
     if not keys:
-        await update.message.reply_text("No keys stored\.", parse_mode='MarkdownV2')
+        await update.message.reply_text("No keys stored\\.", parse_mode='MarkdownV2')
         return
     
     key_lines = []
     for i, entry in enumerate(keys):
-        line = f"{i + 1}\. {escape_markdown_v2(entry['key'])}" 
+        line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}`" 
         
         key_lines.append(line)
 
-    response = "🔑 Stored Keys:\n\n" + "\n".join(key_lines)
+    response = "🔑 **Stored Keys:**\n\n" + "\n".join(key_lines)
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
 async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -161,7 +161,7 @@ async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYP
 
     current_keys = get_gemini_keys()
     if any(entry['key'] == key for entry in current_keys):
-        await update.message.reply_text("⚠️ Key already saved\.", parse_mode='MarkdownV2')
+        await update.message.reply_text("⚠️ Key already saved\\.", parse_mode='MarkdownV2')
         return
 
     new_entry = {"key": key, "name": name}
@@ -170,8 +170,8 @@ async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYP
 
     response = f"✅ Key saved"
     if name:
-        response += f" with name {escape_markdown_v2(name)}"
-    response += "\."
+        response += f" with name **{escape_markdown_v2(name)}**"
+    response += "\\."
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -182,23 +182,23 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not args:
         keys = get_gemini_keys()
         if not keys:
-            await update.message.reply_text("No keys in DB to test\. Use /test <key> to test one\.", parse_mode='MarkdownV2')
+            await update.message.reply_text("No keys in DB to test\\. Use `/test <key>` to test one\\.", parse_mode='MarkdownV2')
             return
 
-        msg = await update.message.reply_text("🔄 Testing all stored keys\.\.\.", parse_mode='MarkdownV2')
+        msg = await update.message.reply_text("🔄 Testing all stored keys\\.\\.\\.", parse_mode='MarkdownV2')
         
         key_strings_to_test = [entry['key'] for entry in keys]
         results = await test_keys_batch(key_strings_to_test)
         
         response_lines = []
         for i, (entry, (status, result)) in enumerate(zip(keys, results)):
-            line = f"{i + 1}\. {escape_markdown_v2(entry['key'][:20])}\\.\\.\\."
+            line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'][:20])}\\.\\.\\.`"
             if entry.get('name'):
-                line += f" \({escape_markdown_v2(entry['name'])}\)"
+                line += f" \\({escape_markdown_v2(entry['name'])}\\)"
             line += f": {escape_markdown_v2(result)}"
             response_lines.append(line)
             
-        response = "🔑 Stored Keys Test Results:\n\n" + "\n".join(response_lines)
+        response = "🔑 **Stored Keys Test Results:**\n\n" + "\n".join(response_lines)
         await msg.edit_text(response, parse_mode='MarkdownV2')
         return
 
@@ -214,34 +214,35 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             key_to_test = entry_to_test['key']
             name = entry_to_test.get('name')
             
-            msg = await update.message.reply_text(f"🔄 Testing key at index {index + 1}\.\.\.", parse_mode='MarkdownV2')
+            msg = await update.message.reply_text(f"🔄 Testing key at index {index + 1}\\.\\.\\.", parse_mode='MarkdownV2')
             status, result_text = await test_gemini_key(key_to_test)
             
-            response = f"🔑 Test Result \(Index {index + 1}\):\n{escape_markdown_v2(key_to_test)}"
+            response = f"🔑 **Test Result \\(Index {index + 1}\\):**\n`{escape_markdown_v2(key_to_test)}`"
             if name:
-                response += f" \({escape_markdown_v2(name)}\)"
+                response += f" \\({escape_markdown_v2(name)}\\)"
             response += f"\nStatus: {escape_markdown_v2(result_text)}"
             await msg.edit_text(response, parse_mode='MarkdownV2')
             return
         else:
-            await update.message.reply_text(f"⚠️ Index out of range\. Please use a number from 1 to {len(keys)}\.", parse_mode='MarkdownV2')
+            await update.message.reply_text(f"⚠️ Index out of range\\. Please use a number from 1 to {len(keys)}\\.", parse_mode='MarkdownV2')
             return
     except ValueError:
         # Not a number, so check if it's a raw API key
         if re.match(r'^AIza[A-Za-z0-9_-]{35}$', argument):
             key_to_test = argument
-            msg = await update.message.reply_text(f"🔄 Testing provided key {escape_markdown_v2(key_to_test[:15])}...", parse_mode='MarkdownV2')
+            msg = await update.message.reply_text(f"🔄 Testing provided key `{escape_markdown_v2(key_to_test[:15])}...`", parse_mode='MarkdownV2')
             status, result_text = await test_gemini_key(key_to_test)
             
-            response = f"🔑 Ad\-hoc Test Result:\n{escape_markdown_v2(key_to_test)}\nStatus: {escape_markdown_v2(result_text)}"
+            response = f"🔑 **Ad\\-hoc Test Result:**\n`{escape_markdown_v2(key_to_test)}`\nStatus: {escape_markdown_v2(result_text)}"
             await msg.edit_text(response, parse_mode='MarkdownV2')
         else:
-            await update.message.reply_text("⚠️ Invalid argument\. Provide a key index, a full API key, or no argument to test all keys\.", parse_mode='MarkdownV2')
+            await update.message.reply_text("⚠️ Invalid argument\\. Provide a key index, a full API key, or no argument to test all keys\\.", parse_mode='MarkdownV2')
+
 
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if not args:
-        await update.message.reply_text("Usage:\n/del <index>", parse_mode='MarkdownV2')
+        await update.message.reply_text("Usage:\n`/del <index>`", parse_mode='MarkdownV2')
         return
 
     try:
@@ -252,12 +253,13 @@ async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             save_gemini_keys(keys)
             
             key_part = escape_markdown_v2(deleted_entry['key'][:30])
-            name_part = f" \({escape_markdown_v2(deleted_entry['name'])}\)" if deleted_entry.get('name') else ""
-            await update.message.reply_text(f"🗑️ Deleted key {index + 1}:\n{key_part}\\.\\.\\.{name_part}", parse_mode='MarkdownV2')
+            name_part = f" \\({escape_markdown_v2(deleted_entry['name'])}\\)" if deleted_entry.get('name') else ""
+            await update.message.reply_text(f"🗑️ Deleted key {index + 1}:\n`{key_part}\\.\\.\\.`{name_part}", parse_mode='MarkdownV2')
         else:
-            await update.message.reply_text(f"⚠️ Invalid index\. Must be 1\-{len(keys)}\.", parse_mode='MarkdownV2')
+            await update.message.reply_text(f"⚠️ Invalid index\\. Must be 1\\-{len(keys)}\\.", parse_mode='MarkdownV2')
     except (ValueError, IndexError):
-        await update.message.reply_text("⚠️ Invalid argument\. Use an index number\.", parse_mode='MarkdownV2')
+        await update.message.reply_text("⚠️ Invalid argument\\. Use an index number\\.", parse_mode='MarkdownV2')
+
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -270,6 +272,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         # Handle cases where an old inline keyboard might have been left over
         await query.edit_message_text("❌ Action not supported or cancelled.", parse_mode='MarkdownV2')
+
 
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
@@ -294,6 +297,5 @@ def main() -> None:
     logger.info("🚀 Gemini Key Manager Bot is running!")
     application.run_polling()
 
-if name == 'main':
+if __name__ == '__main__':
     main()
-
