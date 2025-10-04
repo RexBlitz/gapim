@@ -3,6 +3,7 @@ import re
 import aiohttp
 import asyncio
 import logging
+import datetime 
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -11,6 +12,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 BOT_TOKEN = "8493774369:AAFFquaaAtX3FXbsgjNnDLXRogt60GroDyU"
 MONGO_DB_URL = "mongodb+srv://irexanon:xUf7PCf9cvMHy8g6@rexdb.d9rwo.mongodb.net/?retryWrites=true&w=majority&appName=RexDB"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+# 🔑 AUTHENTICATION CONFIGURATION
+BOT_PASSWORD = "mysecretpassword" # ⚠️ CHANGE THIS!
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -48,6 +52,8 @@ def get_api_keys_db():
     client = get_mongo_client()
     return client["ApiKeys"]
 
+# --- API KEY MANAGEMENT ---
+
 @lru_cache(maxsize=1)
 def _get_gemini_collection():
     """Cache collection reference using original name."""
@@ -62,10 +68,7 @@ def save_gemini_keys(keys: list):
         logger.error(f"Error saving Gemini keys: {e}")
 
 def get_gemini_keys():
-    """
-    Retrieves keys and automatically migrates from old format (list of strings)
-    to new format (list of objects) if needed.
-    """
+    """Retrieves keys and handles migration."""
     try:
         collection = _get_gemini_collection()
         result_doc = collection.find_one({"type": "keys"}, {"keys": 1, "_id": 0})
@@ -76,18 +79,51 @@ def get_gemini_keys():
         if not keys_data:
             return []
 
-        # Check the format of the first item to determine if migration is needed
+        # Check the format for migration
         if isinstance(keys_data[0], str):
             logger.info("Old key format detected. Migrating to new object format.")
             migrated_keys = [{"key": key_str, "name": None} for key_str in keys_data]
-            save_gemini_keys(migrated_keys) # Save migrated data back to DB
+            save_gemini_keys(migrated_keys)
             return migrated_keys
-        
+            
         return keys_data # Already in the new format
-        
+            
     except Exception as e:
         logger.error(f"Error getting Gemini keys: {e}")
         return []
+
+# --- AUTHORIZATION MANAGEMENT (NEW) ---
+
+@lru_cache(maxsize=1)
+def _get_auth_collection():
+    """Cache collection reference for authorized users."""
+    return get_api_keys_db()["authorized_users"]
+
+def add_authorized_user(user_id: int):
+    """Adds a user's ID to the authorized users collection."""
+    try:
+        collection = _get_auth_collection()
+        # Use _id as the user_id for fast lookup
+        collection.update_one(
+            {"_id": user_id},
+            {"$set": {"authorized": True, "timestamp": datetime.datetime.now()}},
+            upsert=True
+        )
+        # Clear cache to ensure immediate recognition
+        is_authorized_user.cache_clear() 
+        logger.info(f"User {user_id} authorized.")
+    except Exception as e:
+        logger.error(f"Error authorizing user {user_id}: {e}")
+
+@lru_cache(maxsize=None) # Cache is cleared on modification
+def is_authorized_user(user_id: int) -> bool:
+    """Checks if a user's ID is in the authorized users collection."""
+    try:
+        collection = _get_auth_collection()
+        return collection.find_one({"_id": user_id, "authorized": True}) is not None
+    except Exception as e:
+        logger.error(f"Error checking authorization for user {user_id}: {e}")
+        return False
 
 # --- 🔧 ASYNC API KEY TESTING ---
 async def test_gemini_key(api_key: str) -> tuple[str, str]:
@@ -117,26 +153,73 @@ def escape_markdown_v2(text: str) -> str:
 
 def parse_key_input(text: str) -> tuple[str | None, str | None]:
     """Parses 'key name' format."""
+    # Matches the key format and optionally captures the rest as the name
     match = re.match(r'^\s*(AIza[A-Za-z0-9_-]{35})(?:\s+(.*))?\s*$', text)
     if match:
         key = match.group(1)
+        # Only take a name if it's not empty/just whitespace
         name = match.group(2).strip() if match.group(2) else None
         return key, name
     return None, None
 
-# --- 🤖 BOT HANDLERS ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    total_keys = len(get_gemini_keys())
-    help_text = (
-        f"👋 **Gemini API Key Manager**\n"
-        f"📊 Keys: **{total_keys}**\n\n"
-        f"• **To Add:** Send a key in the format:\n`AIza...key... Optional Name`\n"
-        f"• `/list` \\- See all keys and their names\n"
-        f"• `/test [key|index]` \\- Test all keys, a specific key, or by index\n"
-        f"• `/del <index>` \\- Delete a key by index"
-    )
-    await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+def restricted(func):
+    """Decorator that checks if the user is authorized."""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if is_authorized_user(user_id):
+            return await func(update, context)
+        else:
+            await update.message.reply_text(
+                "🚫 **Access Denied**\\. Please use `/start` to authenticate\\.",
+                parse_mode='MarkdownV2'
+            )
+    return wrapper
 
+# --- 🤖 BOT HANDLERS ---
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    
+    if is_authorized_user(user_id):
+        total_keys = len(get_gemini_keys())
+        help_text = (
+            f"👋 **Gemini API Key Manager**\n"
+            f"📊 Keys: **{total_keys}**\n\n"
+            f"• **To Add:** Send a key in the format:\n`AIza...key... Optional Name`\n"
+            f"• `/list` \\- See all keys and their names\n"
+            f"• `/test [key|index]` \\- Test all keys, a specific key, or by index\n"
+            f"• `/del <index>` \\- Delete a key by index"
+        )
+        await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+    else:
+        # Set state for password check
+        context.user_data['awaiting_password'] = True
+        await update.message.reply_text("🔐 Welcome\\. Please send the **bot password** to gain access\\.", parse_mode='MarkdownV2')
+
+
+async def authenticate_and_handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles password authentication or, if authorized, processes potential key input."""
+    user_id = update.effective_user.id
+    text_input = update.message.text.strip()
+
+    # Case 1: Awaiting Password
+    if context.user_data.get('awaiting_password'):
+        if text_input == BOT_PASSWORD:
+            add_authorized_user(user_id)
+            del context.user_data['awaiting_password']
+            
+            await update.message.reply_text("🎉 **Access Granted!** You are now authorized\\. Use `/start` to see the commands\\.", parse_mode='MarkdownV2')
+            # Fall through to the start command to show the menu immediately
+            await start(update, context) 
+        else:
+            await update.message.reply_text("❌ Incorrect password\\. Please try again\\.", parse_mode='MarkdownV2')
+    
+    # Case 2: Already Authorized - treat as potential key input
+    elif is_authorized_user(user_id):
+        await handle_potential_key(update, context)
+
+
+@restricted
 async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keys = get_gemini_keys()
     if not keys:
@@ -145,18 +228,22 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     key_lines = []
     for i, entry in enumerate(keys):
-        line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'])}`" 
-        
+        # Apply escape only to the key and name values, not the Markdown syntax
+        key_part = escape_markdown_v2(entry['key'])
+        name_part = f" \\({escape_markdown_v2(entry['name'])}\\)" if entry.get('name') else ""
+        line = f"**{i + 1}\\.** `{key_part}`{name_part}"
         key_lines.append(line)
 
     response = "🔑 **Stored Keys:**\n\n" + "\n".join(key_lines)
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
+# This is NOT restricted because it's called by authenticate_and_handle_text, which has auth logic
 async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text_to_parse = update.message.text.strip()
     key, name = parse_key_input(text_to_parse)
 
     if not key:
+        # Do not reply if it's not a key (avoids spamming for every message)
         return
 
     current_keys = get_gemini_keys()
@@ -174,6 +261,7 @@ async def handle_potential_key(update: Update, context: ContextTypes.DEFAULT_TYP
     response += "\\."
     await update.message.reply_text(response, parse_mode='MarkdownV2')
 
+@restricted
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Tests all keys, a specific key by index, or a raw key string."""
     args = context.args
@@ -192,10 +280,12 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
         response_lines = []
         for i, (entry, (status, result)) in enumerate(zip(keys, results)):
-            line = f"**{i + 1}\\.** `{escape_markdown_v2(entry['key'][:20])}\\.\\.\\.`"
-            if entry.get('name'):
-                line += f" \\({escape_markdown_v2(entry['name'])}\\)"
-            line += f": {escape_markdown_v2(result)}"
+            # Escape parts for MarkdownV2
+            key_part = escape_markdown_v2(entry['key'][:20])
+            name_part = f" \\({escape_markdown_v2(entry['name'])}\\)" if entry.get('name') else ""
+            result_part = escape_markdown_v2(result)
+            
+            line = f"**{i + 1}\\.** `{key_part}\\.\\.\\.`{name_part}: {result_part}"
             response_lines.append(line)
             
         response = "🔑 **Stored Keys Test Results:**\n\n" + "\n".join(response_lines)
@@ -217,10 +307,13 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             msg = await update.message.reply_text(f"🔄 Testing key at index {index + 1}\\.\\.\\.", parse_mode='MarkdownV2')
             status, result_text = await test_gemini_key(key_to_test)
             
-            response = f"🔑 **Test Result \\(Index {index + 1}\\):**\n`{escape_markdown_v2(key_to_test)}`"
-            if name:
-                response += f" \\({escape_markdown_v2(name)}\\)"
-            response += f"\nStatus: {escape_markdown_v2(result_text)}"
+            # Escape parts for MarkdownV2
+            key_part = escape_markdown_v2(key_to_test)
+            name_part = f" \\({escape_markdown_v2(name)}\\)" if name else ""
+            result_part = escape_markdown_v2(result_text)
+
+            response = f"🔑 **Test Result \\(Index {index + 1}\\):**\n`{key_part}`{name_part}"
+            response += f"\nStatus: {result_part}"
             await msg.edit_text(response, parse_mode='MarkdownV2')
             return
         else:
@@ -230,15 +323,23 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Not a number, so check if it's a raw API key
         if re.match(r'^AIza[A-Za-z0-9_-]{35}$', argument):
             key_to_test = argument
-            msg = await update.message.reply_text(f"🔄 Testing provided key `{escape_markdown_v2(key_to_test[:15])}...`", parse_mode='MarkdownV2')
+            
+            # Escape parts for MarkdownV2
+            key_part_short = escape_markdown_v2(key_to_test[:15])
+
+            msg = await update.message.reply_text(f"🔄 Testing provided key `{key_part_short}...`", parse_mode='MarkdownV2')
             status, result_text = await test_gemini_key(key_to_test)
             
-            response = f"🔑 **Ad\\-hoc Test Result:**\n`{escape_markdown_v2(key_to_test)}`\nStatus: {escape_markdown_v2(result_text)}"
+            # Escape parts for MarkdownV2
+            key_part_full = escape_markdown_v2(key_to_test)
+            result_part = escape_markdown_v2(result_text)
+
+            response = f"🔑 **Ad\\-hoc Test Result:**\n`{key_part_full}`\nStatus: {result_part}"
             await msg.edit_text(response, parse_mode='MarkdownV2')
         else:
             await update.message.reply_text("⚠️ Invalid argument\\. Provide a key index, a full API key, or no argument to test all keys\\.", parse_mode='MarkdownV2')
 
-
+@restricted
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if not args:
@@ -252,47 +353,61 @@ async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             deleted_entry = keys.pop(index)
             save_gemini_keys(keys)
             
+            # Escape parts for MarkdownV2
             key_part = escape_markdown_v2(deleted_entry['key'][:30])
             name_part = f" \\({escape_markdown_v2(deleted_entry['name'])}\\)" if deleted_entry.get('name') else ""
+            
             await update.message.reply_text(f"🗑️ Deleted key {index + 1}:\n`{key_part}\\.\\.\\.`{name_part}", parse_mode='MarkdownV2')
         else:
             await update.message.reply_text(f"⚠️ Invalid index\\. Must be 1\\-{len(keys)}\\.", parse_mode='MarkdownV2')
     except (ValueError, IndexError):
         await update.message.reply_text("⚠️ Invalid argument\\. Use an index number\\.", parse_mode='MarkdownV2')
 
-
+@restricted
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     data = query.data
 
-    # Since all trash-related buttons are gone, this is just for cleanup/cancellation
     if data == "cancel_action":
         await query.edit_message_text("❌ Action cancelled.", parse_mode='MarkdownV2')
     else:
-        # Handle cases where an old inline keyboard might have been left over
         await query.edit_message_text("❌ Action not supported or cancelled.", parse_mode='MarkdownV2')
 
 
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
-        BotCommand("start", "Start bot and see help"),
-        BotCommand("add", "Add a key with an optional name"),
+        BotCommand("start", "Start bot and see help (or authenticate)"),
         BotCommand("list", "List keys and their names"),
         BotCommand("test", "Test by key, index, or all"),
         BotCommand("del", "Delete a key by index"),
     ])
 
 def main() -> None:
+    # ⚠️ IMPORTANT: Clear the cache on startup to ensure we read the DB for authorized users
+    is_authorized_user.cache_clear() 
+    
     application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # --- Handlers for Authentication and Key Management ---
+    
+    # 1. Start Command (Handles unauthenticated users, prompts for password)
     application.add_handler(CommandHandler("start", start))
+    
+    # 2. General Text Handler (Handles password attempts AND key inputs from authorized users)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, authenticate_and_handle_text))
+
+    # 3. Protected Command Handlers (Access controlled by @restricted decorator)
     application.add_handler(CommandHandler("list", list_keys))
     application.add_handler(CommandHandler("test", test_key))
     application.add_handler(CommandHandler("del", del_key))
-    application.add_handler(CommandHandler("add", handle_potential_key))
-    application.add_handler(CallbackQueryHandler(button_callback)) 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_potential_key))
+    
+    # NOTE: The implicit "add" action is handled by the MessageHandler above.
+    
+    # 4. Callback Query Handler (Protected)
+    application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # --- End Handlers ---
 
     logger.info("🚀 Gemini Key Manager Bot is running!")
     application.run_polling()
