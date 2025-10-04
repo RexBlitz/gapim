@@ -14,7 +14,7 @@ MONGO_DB_URL = "mongodb+srv://irexanon:xUf7PCf9cvMHy8g6@rexdb.d9rwo.mongodb.net/
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # 🔑 AUTHENTICATION CONFIGURATION
-BOT_PASSWORD = "mysecretpassword" # ⚠️ CHANGE THIS!
+BOT_PASSWORD = "11223344" 
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
