@@ -217,7 +217,7 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
         BotCommand("start", "Start bot and see help (or authenticate)"),
-        BotCommand("list", "List keys and their names),
+        BotCommand("list", "List keys and their names"),
         BotCommand("test", "Test  they by (index or key)"),
         BotCommand("del", "Delete a key by index")
     ])
