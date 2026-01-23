@@ -152,6 +152,7 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
     for i, entry in enumerate(current_batch):
         idx = start_idx + i + 1
         k_val = escape_md(entry['key'][:20])
+        # FIX: Escape the parentheses characters explicitly
         n_val = f" \\({escape_md(entry['name'])}\\)" if entry.get('name') else ""
         lines.append(f"**{idx}\\.** `{k_val}\\.\\.\\.`{n_val}")
 
@@ -164,10 +165,15 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
     markup = InlineKeyboardMarkup([buttons]) if buttons else None
     text = "\n".join(lines)
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode='MarkdownV2')
-    else:
-        await update.message.reply_text(text, reply_markup=markup, parse_mode='MarkdownV2')
+    try:
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode='MarkdownV2')
+        else:
+            await update.message.reply_text(text, reply_markup=markup, parse_mode='MarkdownV2')
+    except Exception as e:
+        logger.error(f"Failed to send list: {e}")
+        # Fallback if Markdown still fails
+        await (update.callback_query.message if update.callback_query else update.message).reply_text("Error displaying list due to formatting issues.")
 
 @restricted
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
