@@ -82,8 +82,9 @@ async def test_gemini_key(api_key: str) -> tuple[str, str]:
 
 def escape_md(text: str) -> str:
     if not text: return ""
-    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
-
+    # Characters that MUST be escaped in MarkdownV2
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return "".join(['\\' + char if char in escape_chars else char for char in str(text)])
 def restricted(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_authorized_user(update.effective_user.id):
@@ -148,14 +149,27 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
     end_idx = min(start_idx + KEYS_PER_PAGE, total_keys)
     current_batch = keys[start_idx:end_idx]
 
-    lines = [f"🔑 **Stored Keys (Page {page+1}/{total_pages})**\n"]
+    # Header - escaping the dash and parentheses
+    header = f"🔑 **Stored Keys \\(Page {page+1}/{total_pages}\\)**\n\n"
+    lines = []
+    
     for i, entry in enumerate(current_batch):
         idx = start_idx + i + 1
+        # Escape the key snippet
         k_val = escape_md(entry['key'][:20])
-        # FIX: Escape the parentheses characters explicitly
-        n_val = f" \\({escape_md(entry['name'])}\\)" if entry.get('name') else ""
+        
+        # Format the name safely: escape brackets manually
+        if entry.get('name'):
+            clean_name = escape_md(entry['name'])
+            n_val = f" \\({clean_name}\\)"
+        else:
+            n_val = ""
+            
+        # . is a reserved character in MarkdownV2, so 1. must be 1\.
         lines.append(f"**{idx}\\.** `{k_val}\\.\\.\\.`{n_val}")
 
+    text = header + "\n".join(lines)
+    
     buttons = []
     if page > 0:
         buttons.append(InlineKeyboardButton("⬅️ Back", callback_data=f"p_{page-1}"))
@@ -163,7 +177,6 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
         buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"p_{page+1}"))
 
     markup = InlineKeyboardMarkup([buttons]) if buttons else None
-    text = "\n".join(lines)
     
     try:
         if update.callback_query:
@@ -172,9 +185,10 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
             await update.message.reply_text(text, reply_markup=markup, parse_mode='MarkdownV2')
     except Exception as e:
         logger.error(f"Failed to send list: {e}")
-        # Fallback if Markdown still fails
-        await (update.callback_query.message if update.callback_query else update.message).reply_text("Error displaying list due to formatting issues.")
-
+        # Final fallback: Send without Markdown if it fails again
+        await (update.callback_query.message if update.callback_query else update.message).reply_text(
+            f"Error displaying page {page+1}. Check logs for character escaping issues."
+        )
 @restricted
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
