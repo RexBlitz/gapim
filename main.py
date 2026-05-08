@@ -11,7 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 # --- CONFIGURATION ---
 BOT_TOKEN = "8493774369:AAFFquaaAtX3FXbsgjNnDLXRogt60GroDyU"
 MONGO_DB_URL = "mongodb+srv://irexanon:xUf7PCf9cvMHy8g6@rexdb.d9rwo.mongodb.net/?retryWrites=true&w=majority&appName=RexDB"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent"
 BOT_PASSWORD = "11223344" 
 KEYS_PER_PAGE = 50
 
@@ -193,12 +193,52 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
 @restricted
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("⚠️ Usage:\n`/test <index>` (e.g. `/test 1`)\n`/test <full_key>`", parse_mode='MarkdownV2')
+        await update.message.reply_text(
+            "⚠️ Usage:\n`/test <index>` (e.g. `/test 1`)\n"
+            "`/test all` (Test every key in DB)\n"
+            "`/test <full_key>`", 
+            parse_mode='MarkdownV2'
+        )
         return
 
-    arg = context.args[0]
+    arg = context.args[0].lower()
+    keys = get_gemini_keys()
+
+    # --- FEATURE: TEST ALL ---
+    if arg == "all":
+        if not keys:
+            await update.message.reply_text("No keys found to test\\.")
+            return
+            
+        status_msg = await update.message.reply_text(f"🔄 Testing all **{len(keys)}** keys\\.\\.\\.", parse_mode='MarkdownV2')
+        
+        # Create a list of tasks for concurrent testing
+        tasks = [test_gemini_key(k['key']) for k in keys]
+        results = await asyncio.gather(*tasks)
+        
+        valid_count = 0
+        lines = []
+        for i, (status_code, result_text) in enumerate(results):
+            if status_code == "valid":
+                valid_count += 1
+            
+            # Formatting line for each key
+            name = f" \\({escape_md(keys[i].get('name'))}\\)" if keys[i].get('name') else ""
+            lines.append(f"**{i+1}\\.** {result_text}{name}")
+
+        # Summary header
+        summary = f"📊 **Test Results:** {valid_count}/{len(keys)} Valid\n\n"
+        full_text = summary + "\n".join(lines)
+
+        # Telegram has a 4096 character limit per message
+        if len(full_text) > 4000:
+            await status_msg.edit_text(f"✅ Finished! {valid_count}/{len(keys)} valid\\. (List too long to display)")
+        else:
+            await status_msg.edit_text(full_text, parse_mode='MarkdownV2')
+        return
+
+    # --- EXISTING: TEST BY INDEX ---
     if arg.isdigit():
-        keys = get_gemini_keys()
         idx = int(arg) - 1
         if 0 <= idx < len(keys):
             entry = keys[idx]
@@ -207,12 +247,15 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await m.edit_text(f"Index {arg} Result: {escape_md(res)}", parse_mode='MarkdownV2')
         else:
             await update.message.reply_text(f"⚠️ Invalid index! Total keys: {len(keys)}")
-    elif re.match(r'^AIza[A-Za-z0-9_-]{35}$', arg):
+            
+    # --- EXISTING: TEST RAW KEY ---
+    elif re.match(r'^AIza[A-Za-z0-9_-]{35}$', context.args[0]):
         m = await update.message.reply_text("🔄 Testing raw key\\.\\.\\.", parse_mode='MarkdownV2')
-        _, res = await test_gemini_key(arg)
+        _, res = await test_gemini_key(context.args[0])
         await m.edit_text(f"Key Result: {escape_md(res)}", parse_mode='MarkdownV2')
     else:
-        await update.message.reply_text("⚠️ Invalid index or key format\\.")
+        await update.message.reply_text("⚠️ Invalid index, command, or key format\\.")
+
 
 @restricted
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
