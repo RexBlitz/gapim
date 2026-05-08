@@ -7,7 +7,7 @@ import datetime
 from functools import lru_cache
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-
+import io
 # --- CONFIGURATION ---
 BOT_TOKEN = "8493774369:AAFFquaaAtX3FXbsgjNnDLXRogt60GroDyU"
 MONGO_DB_URL = "mongodb+srv://irexanon:xUf7PCf9cvMHy8g6@rexdb.d9rwo.mongodb.net/?retryWrites=true&w=majority&appName=RexDB"
@@ -193,7 +193,6 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
 @restricted
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        # FIX 1: Properly escaped brackets and dots in the usage menu
         await update.message.reply_text(
             "⚠️ Usage:\n`/test index` \\(e\\.g\\. `/test 1`\\)\n"
             "`/test all` \\(Test every key in DB\\)\n"
@@ -218,26 +217,36 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         results = await asyncio.gather(*tasks)
         
         valid_count = 0
-        lines = []
+        md_lines = []   # For Telegram Message (Markdown)
+        raw_lines = []  # For .txt File (Plain text)
+        
         for i, (status_code, result_text) in enumerate(results):
             if status_code == "valid":
                 valid_count += 1
             
-            # FIX 2: Added escape_md() to result_text to prevent bracket errors from HTTP statuses
+            # Formatting for Message
             safe_result_text = escape_md(result_text)
             name = f" \\({escape_md(keys[i].get('name'))}\\)" if keys[i].get('name') else ""
-            lines.append(f"**{i+1}\\.** {safe_result_text}{name}")
+            md_lines.append(f"**{i+1}\\.** {safe_result_text}{name}")
+            
+            # Formatting for Txt File
+            raw_name = f" ({keys[i].get('name')})" if keys[i].get('name') else ""
+            raw_lines.append(f"{i+1}. {keys[i]['key']} - {result_text}{raw_name}")
 
-        # Summary header
-        summary = f"📊 **Test Results:** {valid_count}/{len(keys)} Valid\n\n"
-        full_text = summary + "\n".join(lines)
+        summary_md = f"📊 **Test Results:** {valid_count}/{len(keys)} Valid\n\n"
+        full_text_md = summary_md + "\n".join(md_lines)
 
         # Telegram has a 4096 character limit per message
-        if len(full_text) > 4000:
-            # FIX 3: Escaped brackets and exclamation marks in fallback message
-            await status_msg.edit_text(f"✅ Finished\\! {valid_count}/{len(keys)} valid\\. \\(List too long to display\\)", parse_mode='MarkdownV2')
+        if len(full_text_md) > 4000:
+            # Agar text lamba hai, toh .txt file bana kar bhejein
+            file_content = f"Test Results: {valid_count}/{len(keys)} Valid\n" + "-"*40 + "\n" + "\n".join(raw_lines)
+            doc = io.BytesIO(file_content.encode('utf-8'))
+            doc.name = f"Gemini_Keys_Result_{valid_count}_Valid.txt"
+            
+            await status_msg.edit_text(f"✅ Finished\\! **{valid_count}/{len(keys)}** valid\\. \n📄 List zyada lambi thi isliye `.txt` file attach kar di gayi hai\\.", parse_mode='MarkdownV2')
+            await context.bot.send_document(chat_id=update.effective_chat.id, document=doc)
         else:
-            await status_msg.edit_text(full_text, parse_mode='MarkdownV2')
+            await status_msg.edit_text(full_text_md, parse_mode='MarkdownV2')
         return
 
     # --- EXISTING: TEST BY INDEX ---
@@ -258,6 +267,7 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await m.edit_text(f"Key Result: {escape_md(res)}", parse_mode='MarkdownV2')
     else:
         await update.message.reply_text("⚠️ Invalid index, command, or key format\\.", parse_mode='MarkdownV2')
+
 
 @restricted
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
