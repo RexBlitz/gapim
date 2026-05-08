@@ -193,10 +193,11 @@ async def list_keys(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0) 
 @restricted
 async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
+        # FIX 1: Properly escaped brackets and dots in the usage menu
         await update.message.reply_text(
-            "⚠️ Usage:\n`/test <index>` (e.g. `/test 1`)\n"
-            "`/test all` (Test every key in DB)\n"
-            "`/test <full_key>`", 
+            "⚠️ Usage:\n`/test index` \\(e\\.g\\. `/test 1`\\)\n"
+            "`/test all` \\(Test every key in DB\\)\n"
+            "`/test raw_key`", 
             parse_mode='MarkdownV2'
         )
         return
@@ -222,9 +223,10 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if status_code == "valid":
                 valid_count += 1
             
-            # Formatting line for each key
+            # FIX 2: Added escape_md() to result_text to prevent bracket errors from HTTP statuses
+            safe_result_text = escape_md(result_text)
             name = f" \\({escape_md(keys[i].get('name'))}\\)" if keys[i].get('name') else ""
-            lines.append(f"**{i+1}\\.** {result_text}{name}")
+            lines.append(f"**{i+1}\\.** {safe_result_text}{name}")
 
         # Summary header
         summary = f"📊 **Test Results:** {valid_count}/{len(keys)} Valid\n\n"
@@ -232,7 +234,8 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # Telegram has a 4096 character limit per message
         if len(full_text) > 4000:
-            await status_msg.edit_text(f"✅ Finished! {valid_count}/{len(keys)} valid\\. (List too long to display)")
+            # FIX 3: Escaped brackets and exclamation marks in fallback message
+            await status_msg.edit_text(f"✅ Finished\\! {valid_count}/{len(keys)} valid\\. \\(List too long to display\\)", parse_mode='MarkdownV2')
         else:
             await status_msg.edit_text(full_text, parse_mode='MarkdownV2')
         return
@@ -246,7 +249,7 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             _, res = await test_gemini_key(entry['key'])
             await m.edit_text(f"Index {arg} Result: {escape_md(res)}", parse_mode='MarkdownV2')
         else:
-            await update.message.reply_text(f"⚠️ Invalid index! Total keys: {len(keys)}")
+            await update.message.reply_text(f"⚠️ Invalid index\\! Total keys: {len(keys)}", parse_mode='MarkdownV2')
             
     # --- EXISTING: TEST RAW KEY ---
     elif re.match(r'^AIza[A-Za-z0-9_-]{35}$', context.args[0]):
@@ -254,8 +257,7 @@ async def test_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         _, res = await test_gemini_key(context.args[0])
         await m.edit_text(f"Key Result: {escape_md(res)}", parse_mode='MarkdownV2')
     else:
-        await update.message.reply_text("⚠️ Invalid index, command, or key format\\.")
-
+        await update.message.reply_text("⚠️ Invalid index, command, or key format\\.", parse_mode='MarkdownV2')
 
 @restricted
 async def del_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
